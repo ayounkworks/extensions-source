@@ -11,6 +11,7 @@ import keiyoushi.network.get
 import keiyoushi.network.rateLimit
 import keiyoushi.source.KeiSource
 import keiyoushi.utils.asJsoup
+import keiyoushi.utils.parseAs
 import keiyoushi.utils.tryParse
 import okhttp3.Headers
 import okhttp3.HttpUrl
@@ -18,6 +19,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
@@ -33,7 +36,30 @@ abstract class VoraToon : KeiSource() {
         set("User-Agent", USER_AGENT)
     }
 
-    override val supportsFilterFetching: Boolean get() = false
+    override val supportsFilterFetching: Boolean get() = true
+
+    override suspend fun fetchFilterData(): JsonElement = runCatching {
+        client.get("https://api.voratoon.com/genres").parseAs<JsonElement>()
+    }.getOrDefault(JsonNull)
+
+    override fun getFilterList(data: JsonElement?): FilterList {
+        val genres = runCatching {
+            data?.parseAs<GenreResponse>()?.data?.map { it.toPair() }
+        }.getOrNull()
+
+        return FilterList(
+            buildList {
+                add(SortFilter())
+                add(SortOrderFilter())
+                add(StatusFilter())
+                add(FormatFilter())
+                add(TypeFilter())
+                if (!genres.isNullOrEmpty()) {
+                    add(GenreFilter(genres.toTypedArray()))
+                }
+            },
+        )
+    }
 
     override suspend fun getPopularManga(page: Int): MangasPage {
         val url = "$baseUrl/browse".toHttpUrl().newBuilder()
@@ -54,11 +80,23 @@ abstract class VoraToon : KeiSource() {
     }
 
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
-        if (query.isBlank()) return getPopularManga(page)
-
         val url = "$baseUrl/browse".toHttpUrl().newBuilder()
-            .addQueryParameter("search", query)
             .addQueryParameter("page", page.toString())
+            .apply {
+                if (query.isNotBlank()) {
+                    addQueryParameter("search", query)
+                }
+                val filterBuilder = StringBuilder()
+                filters.filterIsInstance<UriFilter>().forEach {
+                    it.addToFilter(filterBuilder)
+                }
+                if (filterBuilder.isNotEmpty()) {
+                    addQueryParameter("filter", filterBuilder.toString())
+                }
+                filters.filterIsInstance<UriQueryFilter>().forEach {
+                    it.addToQuery(this)
+                }
+            }
             .build()
 
         return parseSeriesList(client.get(url.toString()).asJsoup(), page)
@@ -100,7 +138,11 @@ abstract class VoraToon : KeiSource() {
         ) ?: card.selectFirst("img")
         val title = card.selectFirst("a[class*=title]")?.text()?.trim()
             ?.takeIf { it.isNotBlank() }
+            ?: card.selectFirst("h1, h2, h3, h4, [class*=series-title], [class*=manga-title]")?.text()?.trim()
+                ?.takeIf { it.isNotBlank() }
             ?: image?.attr("alt")?.removePrefix("Cover ")?.trim()?.takeIf { it.isNotBlank() }
+            ?: link.text().replace(Regex("""\s+"""), " ").trim()
+                .takeIf { it.isNotBlank() && it.length <= 180 }
             ?: slug.replace('-', ' ').replaceFirstChar { it.uppercase() }
 
         return SManga.create().apply {
