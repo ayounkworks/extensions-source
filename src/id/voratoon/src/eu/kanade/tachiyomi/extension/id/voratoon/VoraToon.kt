@@ -133,9 +133,17 @@ abstract class VoraToon : KeiSource() {
 
     private fun parseSeriesCard(link: Element, card: Element): SManga? {
         val slug = seriesSlug(link.attr("href")) ?: return null
-        val image = card.selectFirst(
-            """img[src*="/cover/"], img[data-src*="/cover/"], img[data-lazy-src*="/cover/"]""",
-        ) ?: card.selectFirst("img")
+        val images = card.select(
+            "img[src], img[data-src], img[data-lazy-src], img[data-original], img[data-original-src], img[data-srcset], img[srcset]",
+        )
+        val image = images.firstNotNullOfOrNull { element ->
+            val candidate = imageUrl(element) ?: return@firstNotNullOfOrNull null
+            if (isCoverImage(element, candidate)) candidate else null
+        }?.let { candidate ->
+            images.firstOrNull { imageUrl(it) == candidate }
+        } ?: images.firstNotNullOfOrNull { element ->
+            imageUrl(element)?.takeUnless(::isPlaceholderImage)?.let { element }
+        }
         val title = card.selectFirst("a[class*=title]")?.text()?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: card.selectFirst("h1, h2, h3, h4, [class*=series-title], [class*=manga-title]")?.text()?.trim()
@@ -188,11 +196,14 @@ abstract class VoraToon : KeiSource() {
                 ?.substringBefore("|")?.removePrefix("Baca")?.trim()
             ?: manga.title
 
-        val coverFromMetadata = document.selectFirst(
-            "meta[property=og:image], meta[name=twitter:image], meta[property=twitter:image]",
-        )?.attr("content")
-            ?.let { absoluteImageUrl(it, document.location()) }
-            ?.takeUnless(::isPlaceholderImage)
+        val coverFromMetadata = document.select(
+            "meta[property=og:image], meta[name=twitter:image], meta[property=twitter:image], meta[name=twitter:image:src]",
+        ).asSequence()
+            .mapNotNull { element ->
+                absoluteImageUrl(element.attr("content"), document.location())
+                    ?.takeUnless(::isPlaceholderImage)
+            }
+            .firstOrNull()
 
         val coverFromImages = document.select(
             "img[src], img[data-src], img[data-lazy-src], img[data-original], img[data-original-src], img[data-srcset], img[srcset]",
@@ -200,19 +211,13 @@ abstract class VoraToon : KeiSource() {
             val candidate = imageUrl(element) ?: return@firstNotNullOfOrNull null
             if (isPlaceholderImage(candidate)) return@firstNotNullOfOrNull null
 
-            val context = (
-                element.parents().map { "${it.id()} ${it.className()}" } +
-                    "${element.id()} ${element.className()} ${element.attr("alt")}"
-                ).joinToString(" ").lowercase()
-            if (candidate.contains("/cover/", ignoreCase = true) || COVER_CONTEXT_REGEX.containsMatchIn(context)) {
-                candidate
-            } else {
-                null
-            }
+            if (isCoverImage(element, candidate)) candidate else null
         }
 
         // Never overwrite a saved cover with null or a generic logo/placeholder when refreshing details.
-        val cover = coverFromMetadata ?: coverFromImages ?: manga.thumbnail_url
+        val savedCover = absoluteImageUrl(manga.thumbnail_url, document.location())
+            ?.takeUnless(::isPlaceholderImage)
+        val cover = coverFromMetadata ?: coverFromImages ?: savedCover
 
         val description = findDescription(document)
         val author = readLabeledValue(document, "Author", "Penulis", "Mangaka")
@@ -537,6 +542,7 @@ abstract class VoraToon : KeiSource() {
                 raw
             }
             val absolute = absoluteImageUrl(candidate, element.baseUri()) ?: continue
+            if (isPlaceholderImage(absolute)) continue
             return absolute
         }
         return null
@@ -561,10 +567,22 @@ abstract class VoraToon : KeiSource() {
         }
     }
 
+    private fun isCoverImage(element: Element, candidate: String): Boolean {
+        if (isPlaceholderImage(candidate)) return false
+        if (candidate.contains("/cover/", ignoreCase = true)) return true
+
+        val context = (
+            element.parents().map { "${it.id()} ${it.className()}" } +
+                "${element.id()} ${element.className()} ${element.attr("alt")} ${element.attr("title")}"
+            ).joinToString(" ").lowercase()
+        return COVER_CONTEXT_REGEX.containsMatchIn(context)
+    }
+
     private fun isPlaceholderImage(url: String): Boolean {
         val normalized = url.lowercase()
-        return listOf("logo", "avatar", "banner", "placeholder", "no-image", "no_image", "noimage", "default-cover")
-            .any(normalized::contains)
+        return listOf(
+            "logo", "avatar", "banner", "placeholder", "no-image", "no_image", "noimage", "default-cover",
+        ).any(normalized::contains)
     }
 
     private fun seriesSlug(href: String): String? = SERIES_LINK_REGEX.find(href.substringBefore('?').substringBefore('#').trimEnd('/'))
