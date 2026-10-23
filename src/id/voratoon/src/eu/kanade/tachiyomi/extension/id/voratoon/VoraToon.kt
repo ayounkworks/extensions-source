@@ -208,8 +208,8 @@ abstract class VoraToon : KeiSource() {
             .mapNotNullTo(candidates) { imageUrl(it) }
 
         val embeddedHtml = document.html()
-            .replace("\\\\/", "/")
-            .replace("\\\\u0026", "&")
+            .replace("\\/", "/")
+        url.replace("\\u0026", "&")
             .replace("&amp;", "&")
         READER_IMAGE_REGEX.findAll(embeddedHtml)
             .map { cleanUrl(it.value) }
@@ -258,9 +258,9 @@ abstract class VoraToon : KeiSource() {
             !url.contains("banner", ignoreCase = true)
 
     private fun cleanUrl(url: String): String =
-        url.replace("\\\\u0026", "&")
+        url.replace("\\u0026", "&")
             .replace("&amp;", "&")
-            .replace("\\\\/", "/")
+            .replace("\\/", "/")
             .trimEnd('\\', '"', '\'', ',', ')')
 
     private companion object {
@@ -269,11 +269,11 @@ abstract class VoraToon : KeiSource() {
 
         private val SERIES_LINK_REGEX = Regex(""".*/series/([A-Za-z0-9_-]+)$""")
         private val READER_IMAGE_REGEX = Regex(
-            """https?://[^"'\\\\\\s<>]+""",
+            """https?://[^"'\s<>]+""",
             RegexOption.IGNORE_CASE,
         )
         private val IMAGE_EXTENSION_REGEX = Regex(
-            """\\.(?:jpe?g|png|webp|avif)(?:[?#].*)?$""",
+            """\.(?:jpe?g|png|webp|avif)(?:[?#].*)?$""",
             RegexOption.IGNORE_CASE,
         )
     }
