@@ -345,7 +345,7 @@ abstract class VoraToon : KeiSource() {
                 val siblings = parent.children()
                 val index = siblings.indexOf(element)
                 if (index >= 0) {
-                    for (siblingIndex in (index + 1) until siblings.size()) {
+                    for (siblingIndex in (index + 1) until siblings.size) {
                         candidates.add(siblings[siblingIndex].text())
                     }
                 }
