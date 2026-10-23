@@ -420,8 +420,23 @@ abstract class VoraToon : KeiSource() {
         }
 
         val relative = RELATIVE_DATE_REGEX.find(text) ?: return 0L
-        val amount = relative.groupValues[1].toLongOrNull() ?: return 0L
+        val numberText = relative.groupValues[1]
+        var amount = numberText.toDoubleOrNull()?.toLong() ?: return 0L
         val unit = relative.groupValues[2].lowercase()
+        val plausibleMaximum = when {
+            unit.startsWith("detik") || unit.startsWith("second") -> 59L
+            unit.startsWith("menit") || unit.startsWith("minute") -> 59L
+            unit.startsWith("jam") || unit.startsWith("hour") -> 72L
+            unit.startsWith("hari") || unit.startsWith("day") -> 31L
+            unit.startsWith("minggu") || unit.startsWith("week") -> 52L
+            unit.startsWith("bulan") || unit.startsWith("month") -> 12L
+            else -> 50L
+        }
+        // The page concatenates views and relative time without spaces (e.g. 84121 jam lalu).
+        // If that produces an impossible interval, use the final two digits as the time count.
+        if (amount > plausibleMaximum && numberText.length > 2) {
+            amount = numberText.filter(Char::isDigit).takeLast(2).toLongOrNull() ?: amount
+        }
         val milliseconds = when {
             unit.startsWith("detik") || unit.startsWith("second") -> 1_000L
             unit.startsWith("menit") || unit.startsWith("minute") -> 60_000L
@@ -477,7 +492,7 @@ abstract class VoraToon : KeiSource() {
             RegexOption.IGNORE_CASE,
         )
         private val RELATIVE_DATE_REGEX = Regex(
-            """(?i)(\d{1,3})\s*(seconds?|minutes?|hours?|days?|weeks?|months?|years?|detik|menit|jam|hari|minggu|bulan|tahun)\s*(?:ago|lalu)?\s*$""",
+            """(?i)(\d+(?:[.,]\d+)?)\s*(seconds?|minutes?|hours?|days?|weeks?|months?|years?|detik|menit|jam|hari|minggu|bulan|tahun)\s*(?:ago|lalu)?\s*$""",
         )
         private val IMAGE_EXTENSION_REGEX = Regex(
             """\.(?:jpe?g|png|webp|avif)(?:[?#].*)?$""",
