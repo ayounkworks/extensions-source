@@ -21,13 +21,47 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 @Source
 abstract class VoraToon : KeiSource() {
 
-    override fun OkHttpClient.Builder.configureClient(): OkHttpClient.Builder = rateLimit(3) { it.host.endsWith("voratoon.com") || it.host.endsWith("voratoon.id") || it.host.endsWith("voratoon.co") }
+    private val baseHost get() = baseUrl.toHttpUrl().host
+
+    private val apiUrl get() = "https://$baseHost/api/proxy"
+
+    override fun OkHttpClient.Builder.configureClient(): OkHttpClient.Builder = apply {
+        addInterceptor { chain ->
+            val request = chain.request()
+            val response = chain.proceed(request)
+
+            if (response.code == 403 &&
+                request.url.host == baseHost &&
+                request.url.encodedPath.contains("/api/")
+            ) {
+                response.close()
+                // Visiting the homepage refreshes the vt_proxy cookie before retrying the API call.
+                chain.proceed(
+                    request.newBuilder()
+                        .url(baseUrl.toHttpUrl())
+                        .headers(headersBuilder().removeAll("Accept").build())
+                        .build(),
+                ).close()
+
+                chain.proceed(request)
+            } else {
+                response
+            }
+        }
+        rateLimit(3) {
+            it.host.endsWith("voratoon.com") ||
+                it.host.endsWith("voratoon.id") ||
+                it.host.endsWith("voratoon.co") ||
+                it.encodedPath.contains("/api/")
+        }
+    }
 
     override fun Headers.Builder.configureHeaders(): Headers.Builder = apply {
         set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
@@ -36,10 +70,15 @@ abstract class VoraToon : KeiSource() {
         set("User-Agent", USER_AGENT)
     }
 
+    private fun apiHeaders(): Headers = headersBuilder()
+        .set("Accept", "application/json")
+        .set("sec-fetch-site", "same-origin")
+        .build()
+
     override val supportsFilterFetching: Boolean get() = true
 
     override suspend fun fetchFilterData(): JsonElement = runCatching {
-        client.get("https://api.voratoon.com/genres").parseAs<JsonElement>()
+        client.get("$apiUrl/genres", apiHeaders()).parseAs<JsonElement>()
     }.getOrDefault(JsonNull)
 
     override fun getFilterList(data: JsonElement?): FilterList {
@@ -62,44 +101,78 @@ abstract class VoraToon : KeiSource() {
     }
 
     override suspend fun getPopularManga(page: Int): MangasPage {
-        val url = "$baseUrl/browse".toHttpUrl().newBuilder()
+        val apiRequest = "$apiUrl/series".toHttpUrl().newBuilder()
+            .addQueryParameter("includeMeta", "true")
+            .addQueryParameter("take", "30")
+            .addQueryParameter("page", page.toString())
+            .addQueryParameter("sort", "popularity")
+            .addQueryParameter("sortOrder", "desc")
+            .build()
+
+        parseApiSeriesList(apiRequest)?.let { return it }
+
+        val htmlRequest = "$baseUrl/browse".toHttpUrl().newBuilder()
             .addQueryParameter("sort", "popularity")
             .addQueryParameter("sortOrder", "desc")
             .addQueryParameter("page", page.toString())
             .build()
-
-        return parseSeriesList(client.get(url.toString()).asJsoup(), page)
+        return parseSeriesList(client.get(htmlRequest.toString()).asJsoup(), page)
     }
 
     override suspend fun getLatestUpdates(page: Int): MangasPage {
-        val url = "$baseUrl/updates".toHttpUrl().newBuilder()
+        val apiRequest = "$apiUrl/series".toHttpUrl().newBuilder()
+            .addQueryParameter("includeMeta", "true")
+            .addQueryParameter("take", "30")
             .addQueryParameter("page", page.toString())
+            .addQueryParameter("sort", "latest")
+            .addQueryParameter("sortOrder", "desc")
             .build()
 
-        return parseSeriesList(client.get(url.toString()).asJsoup(), page)
+        parseApiSeriesList(apiRequest)?.let { return it }
+
+        val htmlRequest = "$baseUrl/updates".toHttpUrl().newBuilder()
+            .addQueryParameter("page", page.toString())
+            .build()
+        return parseSeriesList(client.get(htmlRequest.toString()).asJsoup(), page)
     }
 
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
-        val url = "$baseUrl/browse".toHttpUrl().newBuilder()
+        val apiRequest = "$apiUrl/series".toHttpUrl().newBuilder()
+            .addQueryParameter("includeMeta", "true")
+            .addQueryParameter("take", "30")
             .addQueryParameter("page", page.toString())
             .apply {
-                if (query.isNotBlank()) {
-                    addQueryParameter("search", query)
-                }
+                if (query.isNotBlank()) addQueryParameter("title", query)
                 val filterBuilder = StringBuilder()
-                filters.filterIsInstance<UriFilter>().forEach {
-                    it.addToFilter(filterBuilder)
-                }
-                if (filterBuilder.isNotEmpty()) {
-                    addQueryParameter("filter", filterBuilder.toString())
-                }
-                filters.filterIsInstance<UriQueryFilter>().forEach {
-                    it.addToQuery(this)
-                }
+                filters.filterIsInstance<UriFilter>().forEach { it.addToFilter(filterBuilder) }
+                if (filterBuilder.isNotEmpty()) addQueryParameter("filter", filterBuilder.toString())
+                filters.filterIsInstance<UriQueryFilter>().forEach { it.addToQuery(this) }
             }
             .build()
 
-        return parseSeriesList(client.get(url.toString()).asJsoup(), page)
+        parseApiSeriesList(apiRequest)?.let { return it }
+
+        val htmlRequest = "$baseUrl/browse".toHttpUrl().newBuilder()
+            .addQueryParameter("page", page.toString())
+            .apply {
+                if (query.isNotBlank()) addQueryParameter("search", query)
+                val filterBuilder = StringBuilder()
+                filters.filterIsInstance<UriFilter>().forEach { it.addToFilter(filterBuilder) }
+                if (filterBuilder.isNotEmpty()) addQueryParameter("filter", filterBuilder.toString())
+                filters.filterIsInstance<UriQueryFilter>().forEach { it.addToQuery(this) }
+            }
+            .build()
+        return parseSeriesList(client.get(htmlRequest.toString()).asJsoup(), page)
+    }
+
+    private suspend fun parseApiSeriesList(url: HttpUrl): MangasPage? = runCatching {
+        parseSeriesListResponse(client.get(url, apiHeaders()))
+    }.getOrNull()
+
+    private fun parseSeriesListResponse(response: Response): MangasPage {
+        val result = response.parseAs<SeriesListResponse>()
+        val hasNextPage = result.meta?.let { (it.page ?: 0) < (it.lastPage ?: 0) } ?: false
+        return MangasPage(result.data.map { it.toSManga() }, hasNextPage)
     }
 
     private fun parseSeriesList(document: Document, page: Int): MangasPage {
@@ -179,13 +252,27 @@ abstract class VoraToon : KeiSource() {
     ): SMangaUpdate {
         if (!fetchDetails && !fetchChapters) return SMangaUpdate(manga, chapters)
 
-        val document = client.get(getMangaUrl(manga)).asJsoup()
         val slug = seriesSlug(manga.url) ?: manga.url.substringAfterLast('/')
+        val apiManga = if (fetchDetails) fetchApiMangaDetails(slug) else null
 
-        val updatedManga = if (fetchDetails) parseMangaDetails(document, manga) else manga
+        // Keep the HTML path as a fallback and for metadata that the API does not expose.
+        val document = client.get(getMangaUrl(manga)).asJsoup()
+        val htmlManga = if (fetchDetails) parseMangaDetails(document, manga) else manga
+        val updatedManga = if (fetchDetails && apiManga != null) {
+            mergeMangaDetails(apiManga, htmlManga, manga, document.location())
+        } else {
+            htmlManga
+        }
         val updatedChapters = if (fetchChapters) parseChapters(document, slug) else chapters
         return SMangaUpdate(updatedManga, updatedChapters)
     }
+
+    private suspend fun fetchApiMangaDetails(slug: String): SManga? = runCatching {
+        client.get("$apiUrl/series/$slug", apiHeaders())
+            .parseAs<SeriesDetailResponse>()
+            .data
+            .toSManga()
+    }.getOrNull()
 
     private fun parseMangaDetails(document: Document, manga: SManga): SManga {
         val title = document.selectFirst("h1")?.text()?.trim()
@@ -256,30 +343,25 @@ abstract class VoraToon : KeiSource() {
         }
     }
 
-    private fun parseChapters(document: Document, slug: String): List<SChapter> {
-        val prefix = "/series/$slug/chapter/"
-        return document.select("a[href*=/series/$slug/chapter/]")
-            .mapNotNull { element ->
-                val absoluteUrl = element.absUrl("href").ifEmpty { element.attr("href") }
-                val path = absoluteUrl.toHttpUrlOrNull()?.encodedPath ?: absoluteUrl.substringBefore('?')
-                if (!path.startsWith(prefix)) return@mapNotNull null
+    private fun mergeMangaDetails(
+        apiManga: SManga,
+        htmlManga: SManga,
+        original: SManga,
+        pageUrl: String,
+    ): SManga = SManga.create().apply {
+        val apiCover = absoluteImageUrl(apiManga.thumbnail_url, pageUrl)?.takeUnless(::isPlaceholderImage)
+        val htmlCover = absoluteImageUrl(htmlManga.thumbnail_url, pageUrl)?.takeUnless(::isPlaceholderImage)
+        val savedCover = absoluteImageUrl(original.thumbnail_url, pageUrl)?.takeUnless(::isPlaceholderImage)
 
-                val indexString = path.removePrefix(prefix).trimEnd('/')
-                val index = indexString.toFloatOrNull() ?: return@mapNotNull null
-                val text = element.selectFirst("[class*=chapter-title], [class*=chapter_name]")?.text()
-                    ?.takeIf { it.isNotBlank() }
-                    ?: element.text()
-                val name = cleanChapterName(text, indexString)
-
-                SChapter.create().apply {
-                    url = prefix + indexString
-                    this.name = name
-                    chapter_number = index
-                    date_upload = parseChapterDate(element)
-                }
-            }
-            .distinctBy { it.url }
-            .sortedByDescending { it.chapter_number }
+        url = original.url
+        title = apiManga.title.takeIf { it.isNotBlank() } ?: htmlManga.title.ifBlank { original.title }
+        thumbnail_url = apiCover ?: htmlCover ?: savedCover
+        author = apiManga.author?.takeIf { it.isNotBlank() } ?: htmlManga.author ?: original.author
+        artist = htmlManga.artist ?: original.artist
+        description = apiManga.description?.takeIf { it.isNotBlank() } ?: htmlManga.description ?: original.description
+        genre = apiManga.genre?.takeIf { it.isNotBlank() } ?: htmlManga.genre ?: original.genre
+        status = apiManga.status.takeIf { it != SManga.UNKNOWN } ?: htmlManga.status
+        initialized = true
     }
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
