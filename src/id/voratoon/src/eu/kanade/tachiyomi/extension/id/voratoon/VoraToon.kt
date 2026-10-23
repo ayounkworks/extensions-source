@@ -23,8 +23,7 @@ import org.jsoup.nodes.Element
 @Source
 abstract class VoraToon : KeiSource() {
 
-    override fun OkHttpClient.Builder.configureClient(): OkHttpClient.Builder =
-        rateLimit(3) { it.host.endsWith("voratoon.com") || it.host.endsWith("voratoon.id") }
+    override fun OkHttpClient.Builder.configureClient(): OkHttpClient.Builder = rateLimit(3) { it.host.endsWith("voratoon.com") || it.host.endsWith("voratoon.id") }
 
     override fun Headers.Builder.configureHeaders(): Headers.Builder = apply {
         set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
@@ -238,24 +237,28 @@ abstract class VoraToon : KeiSource() {
             val raw = element.attr(attribute).trim()
             if (raw.isBlank() || raw.startsWith("data:")) continue
             val absolute = element.absUrl(attribute).ifEmpty {
-                if (raw.startsWith("//")) "https:$raw" else if (raw.startsWith("/")) "$baseUrl$raw" else raw
+                if (raw.startsWith("//")) {
+                    "https:$raw"
+                } else if (raw.startsWith("/")) {
+                    "$baseUrl$raw"
+                } else {
+                    raw
+                }
             }
             if (absolute.startsWith("http")) return cleanUrl(absolute)
         }
         return null
     }
 
-    private fun seriesSlug(href: String): String? =
-        SERIES_LINK_REGEX.find(href.substringBefore('?').substringBefore('#').trimEnd('/'))
-            ?.groupValues?.getOrNull(1)
+    private fun seriesSlug(href: String): String? = SERIES_LINK_REGEX.find(href.substringBefore('?').substringBefore('#').trimEnd('/'))
+        ?.groupValues?.getOrNull(1)
 
-    private fun isReaderImage(url: String): Boolean =
-        url.contains("voratoon", ignoreCase = true) &&
-            IMAGE_EXTENSION_REGEX.containsMatchIn(url) &&
-            !url.contains("/cover/", ignoreCase = true) &&
-            !url.contains("logo", ignoreCase = true) &&
-            !url.contains("avatar", ignoreCase = true) &&
-            !url.contains("banner", ignoreCase = true)
+    private fun isReaderImage(url: String): Boolean = url.contains("voratoon", ignoreCase = true) &&
+        IMAGE_EXTENSION_REGEX.containsMatchIn(url) &&
+        !url.contains("/cover/", ignoreCase = true) &&
+        !url.contains("logo", ignoreCase = true) &&
+        !url.contains("avatar", ignoreCase = true) &&
+        !url.contains("banner", ignoreCase = true)
 
     private fun cleanUrl(url: String): String =
         url.replace("\\u0026", "&")
