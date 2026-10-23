@@ -50,21 +50,32 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew :src:id:voratoon:assembleRelease
 
-      - name: Upload extension APK
+      - name: Upload build artifact as backup
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: voratoon-personal-extension
-          path: src/id/voratoon/build/outputs/apk/release/*.apk
+          path: |
+            src/id/voratoon/build/outputs/apk/release/*.apk
+            src/id/voratoon/build/outputs/jar/release/*.jar
           if-no-files-found: error
           retention-days: 7
 
-      - name: Prepare personal Mihon repository
+      - name: Generate Mihon index.pb repository
         shell: bash
         run: |
           set -euo pipefail
+          pip install protobuf
           APK="$(find src/id/voratoon/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          JAR="$(find src/id/voratoon/build/outputs/jar/release -maxdepth 1 -type f -name '*.jar' -print -quit)"
+          INFO="src/id/voratoon/build/keiyoushi-source-info.json"
+          ICON="src/id/voratoon/res/mipmap-xhdpi/ic_launcher.png"
           test -n "$APK"
-          FILENAME="$(basename "$APK")"
+          test -n "$JAR"
+          test -f "$INFO"
+          test -f "$ICON"
+
+          FILENAME_APK="$(basename "$APK")"
+          FILENAME_JAR="$(basename "$JAR")"
           APKSIGNER="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -x "$APKSIGNER"
           FINGERPRINT="$("$APKSIGNER" verify --print-certs "$APK" | awk -F': ' '/Signer #1 certificate SHA-256 digest/ {print tolower($2)}' | tr -d ':')"
@@ -72,44 +83,86 @@ jobs:
 
           PUBLISH_DIR="$RUNNER_TEMP/voratoon-repo"
           mkdir -p "$PUBLISH_DIR"
-          cp "$APK" "$PUBLISH_DIR/$FILENAME"
+          cp "$APK" "$PUBLISH_DIR/$FILENAME_APK"
+          cp "$JAR" "$PUBLISH_DIR/$FILENAME_JAR"
+          cp "$ICON" "$PUBLISH_DIR/icon.png"
 
-          python3 - "$PUBLISH_DIR" "$FILENAME" "$FINGERPRINT" <<'PY'
-          import json, pathlib, sys
+          python3 - "$PUBLISH_DIR" "$FILENAME_APK" "$FILENAME_JAR" "$FINGERPRINT" "$INFO" "${GITHUB_REPOSITORY}" <<'PY'
+          import gzip
+          import json
+          import pathlib
+          import sys
+
+          from google.protobuf import json_format
+
           root = pathlib.Path(sys.argv[1])
-          apk = sys.argv[2]
-          fingerprint = sys.argv[3]
-          entry = [{
-              "name": "VoraToon Personal",
-              "pkg": "eu.kanade.tachiyomi.extension.id.ayounkworks.voratoonpersonal",
-              "apk": apk,
-              "lang": "id",
-              "code": 88,
-              "version": "1.6.88",
-              "nsfw": 0,
-              "hasReadme": 0,
-              "hasChangelog": 0,
-              "sources": [{
-                  "id": 158530748440709235,
-                  "lang": "id",
-                  "name": "VoraToon Personal",
-                  "baseUrl": "https://voratoon.co",
-                  "versionId": 88
-              }]
-          }]
-          (root / "index.json").write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-          (root / "index.min.json").write_text(json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
-          repo = {"meta": {
-              "name": "Ayounkworks VoraToon Personal",
-              "shortName": "VoraToon Personal",
-              "website": "https://github.com/ayounkworks/extensions-source",
-              "signingKeyFingerprint": fingerprint
-          }}
-          (root / "repo.json").write_text(json.dumps(repo, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          apk_name, jar_name, fingerprint, info_path, repository = sys.argv[2:]
+          sys.path.insert(0, str(pathlib.Path.cwd() / ".github" / "scripts"))
+          import index_pb2
+
+          info = json.loads(pathlib.Path(info_path).read_text(encoding="utf-8"))
+          raw_base = f"https://raw.githubusercontent.com/{repository}/repo"
+          extension = index_pb2.Extension(
+              name=info["name"],
+              packageName=info["packageName"],
+              resources=index_pb2.Resources(
+                  apkUrl=f"{raw_base}/{apk_name}",
+                  iconUrl=f"{raw_base}/icon.png",
+                  jarUrl=f"{raw_base}/{jar_name}",
+              ),
+              extensionLib=info["extensionLib"],
+              versionCode=info["versionCode"],
+              versionName=info["versionName"],
+              contentWarning=info["contentWarning"],
+              sources=[
+                  index_pb2.Source(
+                      id=int(source["id"]),
+                      name=source["name"],
+                      language=source["lang"],
+                      homeUrl=source["baseUrl"],
+                      mirrorUrls=source.get("mirrorUrls", []),
+                  )
+                  for source in info["sources"]
+              ],
+          )
+
+          index = index_pb2.Index(
+              name="VoraToon Personal",
+              badgeLabel="VORA",
+              signingKey=fingerprint,
+              contact=index_pb2.Contact(
+                  website=f"https://github.com/{repository}",
+              ),
+              extensionList=index_pb2.ExtensionList(extensions=[extension]),
+          )
+          (root / "index.pb").write_bytes(
+              gzip.compress(index.SerializeToString(deterministic=True), mtime=0)
+          )
+          (root / "index.json").write_text(
+              json_format.MessageToJson(
+                  index,
+                  always_print_fields_with_no_presence=False,
+                  preserving_proto_field_name=True,
+              ) + "\n",
+              encoding="utf-8",
+          )
+          (root / "repo.json").write_text(
+              json.dumps({
+                  "index_v2": f"{raw_base}/index.pb",
+                  "meta": {
+                      "name": "VoraToon Personal",
+                      "shortName": "VoraToon",
+                      "website": f"https://github.com/{repository}",
+                      "signingKeyFingerprint": fingerprint,
+                  },
+              }, indent=2) + "\n",
+              encoding="utf-8",
+          )
           (root / "README.md").write_text(
-              "# VoraToon Personal\n\nAdd this URL in Mihon → Settings → Browse → Extension repos:\n\n"
-              "https://raw.githubusercontent.com/ayounkworks/extensions-source/repo/index.min.json\n",
-              encoding="utf-8"
+              "# VoraToon Personal\n\n"
+              "Add this repository URL in Mihon → Settings → Browse → Extension repos:\n\n"
+              f"{raw_base}/index.pb\n",
+              encoding="utf-8",
           )
           PY
 
@@ -124,6 +177,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .
-          git commit -m "Publish VoraToon Personal extension"
+          git commit -m "Publish VoraToon Personal extension repository"
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push --force origin repo
