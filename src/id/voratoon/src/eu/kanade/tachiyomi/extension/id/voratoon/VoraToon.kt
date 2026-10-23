@@ -322,9 +322,9 @@ abstract class VoraToon : KeiSource() {
         val alternatives = labels.joinToString("|") { Regex.escape(it) }
         val inlinePattern = Regex("""(?i)^(?:$alternatives)\s*(?:[:：–—-]\s*|\s+)(.+?)\s*$""")
         val exactPattern = Regex("""(?i)^(?:$alternatives)\s*[:：–—-]?\s*$""")
-        val elements = document.getAllElements()
+        val emptyValuePattern = Regex("""(?i)^(?:$alternatives)\s*[-–—]\s*$""")
 
-        for (element in elements) {
+        for (element in document.getAllElements()) {
             if (element.childrenSize() > 3) continue
             val directText = normalizeLabelText(element.ownText())
             val match = inlinePattern.matchEntire(directText) ?: continue
@@ -332,29 +332,37 @@ abstract class VoraToon : KeiSource() {
             if (value != null) return value
         }
 
-        for (element in elements) {
+        for (element in document.getAllElements()) {
             val directText = normalizeLabelText(element.ownText())
             if (!exactPattern.matches(directText)) continue
 
-            val candidates = mutableListOf<String>()
-            element.nextElementSibling()?.let { candidates.add(it.text()) }
-            element.children().forEach { child -> candidates.add(child.text()) }
+            // A value nested inside the label container is safer than reading a larger parent.
+            val nestedValue = element.children()
+                .asSequence()
+                .filter { it.childrenSize() <= 1 && it.select("a").isEmpty() }
+                .mapNotNull { cleanMetadataValue(it.text()) }
+                .firstOrNull { !exactPattern.matches(normalizeLabelText(it)) }
+            if (nestedValue != null) return nestedValue
 
-            val parent = element.parent()
-            if (parent != null) {
-                val siblings = parent.children()
-                val index = siblings.indexOf(element)
-                if (index >= 0) {
-                    for (siblingIndex in (index + 1) until siblings.size) {
-                        candidates.add(siblings[siblingIndex].text())
-                    }
+            val next = element.nextElementSibling()
+            if (next != null) {
+                val nextText = next.text().trim()
+                val nextValue = cleanMetadataValue(nextText)
+                val simpleAdjacentValue = next.childrenSize() <= 1 &&
+                    next.select("a").isEmpty() &&
+                    nextText.length <= 120
+                if (simpleAdjacentValue && nextValue != null &&
+                    !exactPattern.matches(normalizeLabelText(nextValue))
+                ) {
+                    return nextValue
                 }
+
+                // Do not accidentally treat the following genre/metadata block as this field's value.
+                if (nextText.isNotBlank()) continue
             }
 
-            val value = candidates.asSequence()
-                .mapNotNull(::cleanMetadataValue)
-                .firstOrNull { !exactPattern.matches(normalizeLabelText(it)) }
-            if (value != null) return value
+            // VoraToon sometimes renders an empty value as "Author-".
+            if (emptyValuePattern.matches(directText)) continue
         }
 
         return null
