@@ -383,14 +383,29 @@ abstract class VoraToon : KeiSource() {
     private fun cleanChapterName(raw: String, indexString: String): String {
         val formattedIndex = indexString.removeSuffix(".0")
         val normalized = raw.replace(Regex("""\s+"""), " ").trim()
-        val chapterPrefix = Regex("""(?i)^\s*(?:chapter|ch\.?)\s*\d+(?:\.\d+)?""")
-        var titleSuffix = normalized.replaceFirst(chapterPrefix, "").trim()
 
+        // Use the chapter index from the link URL as the source of truth.
+        // Some pages concatenate the chapter index, view count and update age:
+        // "Chapter 11084121 jam lalu" => index 110 + views 8412 + "1 jam lalu".
+        val titleWithoutChapterPrefix = normalized.replaceFirst(
+            Regex("""(?i)^\s*(?:chapter|ch\.?)\s*"""),
+            "",
+        )
+        val afterIndex = if (titleWithoutChapterPrefix.startsWith(formattedIndex)) {
+            titleWithoutChapterPrefix.removePrefix(formattedIndex)
+        } else {
+            titleWithoutChapterPrefix
+        }
+
+        var titleSuffix = afterIndex.trim()
         val relativeDate = RELATIVE_DATE_REGEX.find(titleSuffix)
         if (relativeDate != null) {
             titleSuffix = titleSuffix.substring(0, relativeDate.range.first)
             titleSuffix = titleSuffix.replace(Regex("""(?i)\s*\d+(?:[.,]\d+)?\s*[KMB]?\s*$"""), "")
             titleSuffix = titleSuffix.replace(Regex("""(?i)\s*(?:UP|NEW)\s*$"""), "")
+        } else {
+            // Remove the common fused view-count suffix even if there is no relative date.
+            titleSuffix = titleSuffix.replace(Regex("""(?i)\s+\d+(?:[.,]\d+)?\s*[KMB]?\s*$"""), "")
         }
 
         titleSuffix = titleSuffix.trim().trimStart('—', '-', ':', '|', '·').trim()
