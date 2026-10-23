@@ -10,166 +10,275 @@ import keiyoushi.annotation.Source
 import keiyoushi.network.get
 import keiyoushi.network.rateLimit
 import keiyoushi.source.KeiSource
-import keiyoushi.utils.parseAs
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
-import kotlinx.serialization.json.JsonElement
+import keiyoushi.utils.asJsoup
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
-import okhttp3.Response
+import okhttp3.Request
+import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 
 @Source
 abstract class VoraToon : KeiSource() {
 
-    private val baseHost get() = baseUrl.toHttpUrl().host
+    override fun OkHttpClient.Builder.configureClient(): OkHttpClient.Builder = rateLimit(3) { it.host.endsWith("voratoon.com") || it.host.endsWith("voratoon.id") }
 
-    private val apiUrl get() = "https://$baseHost/api/proxy"
+    override fun Headers.Builder.configureHeaders(): Headers.Builder = apply {
+        set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+        set("Accept-Language", "en-US,en;q=0.9,id;q=0.8")
+        set("Referer", "$baseUrl/")
+        set("User-Agent", USER_AGENT)
+    }
 
-    override fun OkHttpClient.Builder.configureClient() = apply {
-        addInterceptor { chain ->
-            val request = chain.request()
-            val response = chain.proceed(request)
+    override val supportsFilterFetching: Boolean get() = false
 
-            if (response.code == 403 &&
-                request.url.host == baseHost &&
-                request.url.encodedPath.contains("/api/")
-            ) {
-                response.close()
-                // Load the homepage to receive the vt_proxy cookie before retrying.
-                chain.proceed(
-                    request.newBuilder()
-                        .url(baseUrl.toHttpUrl())
-                        .headers(headersBuilder().removeAll("Accept").build())
-                        .build(),
-                ).close()
+    override suspend fun getPopularManga(page: Int): MangasPage {
+        val url = "$baseUrl/browse".toHttpUrl().newBuilder()
+            .addQueryParameter("sort", "popularity")
+            .addQueryParameter("sortOrder", "desc")
+            .addQueryParameter("page", page.toString())
+            .build()
 
-                chain.proceed(request)
-            } else {
-                response
+        return parseSeriesList(client.get(url.toString()).asJsoup(), page)
+    }
+
+    override suspend fun getLatestUpdates(page: Int): MangasPage {
+        val url = "$baseUrl/updates".toHttpUrl().newBuilder()
+            .addQueryParameter("page", page.toString())
+            .build()
+
+        return parseSeriesList(client.get(url.toString()).asJsoup(), page)
+    }
+
+    override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
+        if (query.isBlank()) return getPopularManga(page)
+
+        val url = "$baseUrl/browse".toHttpUrl().newBuilder()
+            .addQueryParameter("search", query)
+            .addQueryParameter("page", page.toString())
+            .build()
+
+        return parseSeriesList(client.get(url.toString()).asJsoup(), page)
+    }
+
+    private fun parseSeriesList(document: Document, page: Int): MangasPage {
+        val cards = document.select("article")
+        val candidates = if (cards.isNotEmpty()) {
+            cards.mapNotNull { card ->
+                val link = card.select("a[href*=/series/]")
+                    .firstOrNull { seriesSlug(it.attr("href")) != null }
+                    ?: return@mapNotNull null
+                parseSeriesCard(link, card)
             }
-        }
-        rateLimit(3) { it.encodedPath.contains("/api/") }
-    }
-
-    override fun Headers.Builder.configureHeaders() = apply {
-        set("Accept", "application/json")
-        set("Accept-language", "en-US,en;q=0.9,id;q=0.8")
-        set("sec-fetch-site", "same-origin")
-    }
-
-    override suspend fun getPopularManga(page: Int) = parseSeriesListResponse(
-        client.get(
-            "$apiUrl/series".toHttpUrl().newBuilder()
-                .addQueryParameter("includeMeta", "true")
-                .addQueryParameter("take", "30")
-                .addQueryParameter("page", page.toString())
-                .addQueryParameter("sort", "popularity")
-                .addQueryParameter("sortOrder", "desc")
-                .build(),
-        ),
-    )
-
-    override suspend fun getLatestUpdates(page: Int) = parseSeriesListResponse(
-        client.get(
-            "$apiUrl/series".toHttpUrl().newBuilder()
-                .addQueryParameter("includeMeta", "true")
-                .addQueryParameter("take", "30")
-                .addQueryParameter("page", page.toString())
-                .addQueryParameter("sort", "latest")
-                .addQueryParameter("sortOrder", "desc")
-                .build(),
-        ),
-    )
-
-    override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList) = parseSeriesListResponse(
-        client.get(
-            "$apiUrl/series".toHttpUrl().newBuilder()
-                .addQueryParameter("includeMeta", "true")
-                .addQueryParameter("take", "30")
-                .addQueryParameter("page", page.toString())
-                .apply {
-                    if (query.isNotEmpty()) {
-                        addQueryParameter("title", query)
-                    }
-                    val filterBuilder = StringBuilder()
-                    filters.filterIsInstance<UriFilter>().forEach {
-                        it.addToFilter(filterBuilder)
-                    }
-                    if (filterBuilder.isNotEmpty()) {
-                        addQueryParameter("filter", filterBuilder.toString())
-                    }
-                    filters.filterIsInstance<UriQueryFilter>().forEach {
-                        it.addToQuery(this)
-                    }
+        } else {
+            document.select("a[href*=/series/]")
+                .mapNotNull { link ->
+                    if (seriesSlug(link.attr("href")) == null) return@mapNotNull null
+                    parseSeriesCard(link, link)
                 }
-                .build(),
-        ),
-    )
+        }
+
+        val mangas = candidates.distinctBy { it.url }
+        val nextPage = page + 1
+        val hasNextPage = document.select("a[rel=next], a[aria-label*=Next], a[href*=page]")
+            .any { link ->
+                val href = link.absUrl("href").ifEmpty { link.attr("href") }
+                val targetPage = href.toHttpUrlOrNull()?.queryParameter("page")?.toIntOrNull()
+                targetPage == nextPage || link.attr("rel").equals("next", true)
+            }
+
+        return MangasPage(mangas, hasNextPage)
+    }
+
+    private fun parseSeriesCard(link: Element, card: Element): SManga? {
+        val slug = seriesSlug(link.attr("href")) ?: return null
+        val image = card.selectFirst(
+            """img[src*="/cover/"], img[data-src*="/cover/"], img[data-lazy-src*="/cover/"]""",
+        ) ?: card.selectFirst("img")
+        val title = card.selectFirst("a[class*=title]")?.text()?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: image?.attr("alt")?.removePrefix("Cover ")?.trim()?.takeIf { it.isNotBlank() }
+            ?: slug.replace('-', ' ').replaceFirstChar { it.uppercase() }
+
+        return SManga.create().apply {
+            url = "/series/$slug"
+            this.title = title
+            thumbnail_url = image?.let(::imageUrl)
+            initialized = true
+        }
+    }
+
+    override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
+        if (url.host != baseUrl.toHttpUrl().host) return null
+        val slug = url.pathSegments.getOrNull(1)
+            ?.takeIf { url.pathSegments.firstOrNull() == "series" }
+            ?: return null
+
+        val manga = SManga.create().apply {
+            this.url = "/series/$slug"
+        }
+        return fetchMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = false).manga
+    }
 
     override suspend fun fetchMangaUpdate(
         manga: SManga,
         chapters: List<SChapter>,
         fetchDetails: Boolean,
         fetchChapters: Boolean,
-    ): SMangaUpdate = coroutineScope {
-        val slug = manga.getSlug(baseUrl)
-        val details = if (fetchDetails) async { client.get("$apiUrl/series/$slug") } else null
-        val chapterList = if (fetchChapters) async { client.get("$apiUrl/series/$slug/chapters") } else null
+    ): SMangaUpdate {
+        if (!fetchDetails && !fetchChapters) return SMangaUpdate(manga, chapters)
 
-        SMangaUpdate(
-            details?.await()?.parseAs<SeriesDetailResponse>()?.data?.toSManga() ?: manga,
-            chapterList?.await()?.parseAs<ChapterListResponse>()?.data?.map { it.toSChapter(slug) } ?: chapters,
-        )
+        val document = client.get(getMangaUrl(manga)).asJsoup()
+        val slug = seriesSlug(manga.url) ?: manga.url.substringAfterLast('/')
+
+        val updatedManga = if (fetchDetails) parseMangaDetails(document, manga) else manga
+        val updatedChapters = if (fetchChapters) parseChapters(document, slug) else chapters
+        return SMangaUpdate(updatedManga, updatedChapters)
     }
 
-    override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
-        if (url.host != baseUrl.toHttpUrl().host) return null
-        if (url.pathSegments.getOrNull(0) != "series") return null
-        val slug = url.pathSegments.getOrNull(1) ?: return null
-        val manga = SManga.create().apply {
-            this.url = "/series/$slug"
+    private fun parseMangaDetails(document: Document, manga: SManga): SManga {
+        val title = document.selectFirst("h1")?.text()?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: document.selectFirst("meta[property=og:title]")?.attr("content")
+                ?.substringBefore("|")?.removePrefix("Baca")?.trim()
+            ?: manga.title
+
+        val cover = document.selectFirst("meta[property=og:image]")?.attr("content")
+            ?.takeIf { it.startsWith("http") }
+            ?: document.select("img[src], img[data-src], img[data-lazy-src]")
+                .firstOrNull { imageUrl(it)?.contains("/cover/") == true }
+                ?.let(::imageUrl)
+
+        val description = document.selectFirst(".synopsis")?.text()?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: document.selectFirst("meta[name=description]")?.attr("content")
+                ?.takeIf { it.isNotBlank() }
+
+        val fullText = document.text().lowercase()
+        val status = when {
+            "completed" in fullText || "complete" in fullText || "tamat" in fullText -> SManga.COMPLETED
+            "hiatus" in fullText -> SManga.ON_HIATUS
+            "ongoing" in fullText -> SManga.ONGOING
+            else -> SManga.UNKNOWN
         }
-        return getMangaUpdate(
-            manga,
-            emptyList(),
-            true,
-            false,
-        ).manga
+
+        return SManga.create().apply {
+            url = manga.url
+            this.title = title
+            thumbnail_url = cover
+            this.description = description
+            this.status = status
+            initialized = true
+        }
+    }
+
+    private fun parseChapters(document: Document, slug: String): List<SChapter> {
+        val prefix = "/series/$slug/chapter/"
+        return document.select("a[href*=/series/$slug/chapter/]")
+            .mapNotNull { element ->
+                val absoluteUrl = element.absUrl("href").ifEmpty { element.attr("href") }
+                val path = absoluteUrl.toHttpUrlOrNull()?.encodedPath ?: absoluteUrl.substringBefore('?')
+                if (!path.startsWith(prefix)) return@mapNotNull null
+
+                val indexString = path.removePrefix(prefix).trimEnd('/')
+                val index = indexString.toFloatOrNull() ?: return@mapNotNull null
+                val name = element.text().trim().ifEmpty {
+                    "Chapter ${indexString.removeSuffix(".0")}"
+                }
+
+                SChapter.create().apply {
+                    url = prefix + indexString
+                    this.name = name
+                    chapter_number = index
+                    date_upload = 0L
+                }
+            }
+            .distinctBy { it.url }
+            .sortedByDescending { it.chapter_number }
     }
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
         val (slug, chapterIndex) = chapter.getSlugAndIndex(baseUrl)
-        return client.get(
-            "$apiUrl/series/$slug/chapters/$chapterIndex",
-        ).parseAs<ChapterDetailResponse>().data.toPageList()
+        val url = "$baseUrl/series/$slug/chapter/$chapterIndex"
+        val document = client.get(url).asJsoup()
+        val candidates = linkedSetOf<String>()
+
+        document.select("img[src], img[data-src], img[data-lazy-src], img[data-original]")
+            .mapNotNullTo(candidates) { imageUrl(it) }
+
+        val embeddedHtml = document.html()
+            .replace("\\/", "/")
+        url.replace("\\u0026", "&")
+            .replace("&amp;", "&")
+        READER_IMAGE_REGEX.findAll(embeddedHtml)
+            .map { cleanUrl(it.value) }
+            .filter(::isReaderImage)
+            .forEach(candidates::add)
+
+        return candidates
+            .filter(::isReaderImage)
+            .distinct()
+            .mapIndexed { index, imageUrl -> Page(index, imageUrl = imageUrl) }
     }
 
-    private fun parseSeriesListResponse(response: Response): MangasPage {
-        val result = response.parseAs<SeriesListResponse>()
-        val mangas = result.data.map { it.toSManga() }
-        val hasNextPage = result.meta?.let { (it.page ?: 0) < (it.lastPage ?: 0) } ?: false
-        return MangasPage(mangas, hasNextPage)
-    }
+    override fun imageRequest(page: Page): Request = Request.Builder()
+        .url(page.imageUrl!!)
+        .headers(
+            headersBuilder()
+                .set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+                .set("Referer", "$baseUrl/")
+                .build(),
+        )
+        .get()
+        .build()
 
-    override val supportsFilterFetching: Boolean get() = true
-
-    override suspend fun fetchFilterData(): JsonElement = client.get("$apiUrl/genres").parseAs()
-
-    override fun getFilterList(data: JsonElement?): FilterList {
-        val genres = data?.parseAs<GenreResponse>()?.data?.map { it.toPair() }
-        return FilterList(
-            buildList {
-                add(SortFilter())
-                add(SortOrderFilter())
-                add(StatusFilter())
-                add(FormatFilter())
-                add(TypeFilter())
-                if (!genres.isNullOrEmpty()) {
-                    add(GenreFilter(genres.toTypedArray()))
+    private fun imageUrl(element: Element): String? {
+        for (attribute in listOf("data-src", "data-lazy-src", "data-original", "src")) {
+            val raw = element.attr(attribute).trim()
+            if (raw.isBlank() || raw.startsWith("data:")) continue
+            val absolute = element.absUrl(attribute).ifEmpty {
+                if (raw.startsWith("//")) {
+                    "https:$raw"
+                } else if (raw.startsWith("/")) {
+                    "$baseUrl$raw"
+                } else {
+                    raw
                 }
-            },
+            }
+            if (absolute.startsWith("http")) return cleanUrl(absolute)
+        }
+        return null
+    }
+
+    private fun seriesSlug(href: String): String? = SERIES_LINK_REGEX.find(href.substringBefore('?').substringBefore('#').trimEnd('/'))
+        ?.groupValues?.getOrNull(1)
+
+    private fun isReaderImage(url: String): Boolean = url.contains("voratoon", ignoreCase = true) &&
+        IMAGE_EXTENSION_REGEX.containsMatchIn(url) &&
+        !url.contains("/cover/", ignoreCase = true) &&
+        !url.contains("logo", ignoreCase = true) &&
+        !url.contains("avatar", ignoreCase = true) &&
+        !url.contains("banner", ignoreCase = true)
+
+    private fun cleanUrl(url: String): String = url.replace("\\u0026", "&")
+        .replace("&amp;", "&")
+        .replace("\\/", "/")
+        .trimEnd('\\', '"', '\'', ',', ')')
+
+    private companion object {
+        private const val USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+
+        private val SERIES_LINK_REGEX = Regex(""".*/series/([A-Za-z0-9_-]+)$""")
+        private val READER_IMAGE_REGEX = Regex(
+            """https?://[^"'\s<>]+""",
+            RegexOption.IGNORE_CASE,
+        )
+        private val IMAGE_EXTENSION_REGEX = Regex(
+            """\.(?:jpe?g|png|webp|avif)(?:[?#].*)?$""",
+            RegexOption.IGNORE_CASE,
         )
     }
 }
