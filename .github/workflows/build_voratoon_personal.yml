@@ -71,8 +71,8 @@ jobs:
           test "${#FINGERPRINT}" -eq 64
 
           PUBLISH_DIR="$RUNNER_TEMP/voratoon-repo"
-          mkdir -p "$PUBLISH_DIR/apk"
-          cp "$APK" "$PUBLISH_DIR/apk/$FILENAME"
+          mkdir -p "$PUBLISH_DIR"
+          cp "$APK" "$PUBLISH_DIR/$FILENAME"
 
           python3 - "$PUBLISH_DIR" "$FILENAME" "$FINGERPRINT" <<'PY'
           import json, pathlib, sys
