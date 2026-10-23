@@ -579,7 +579,14 @@ abstract class VoraToon : KeiSource() {
     private fun isPlaceholderImage(url: String): Boolean {
         val normalized = url.lowercase()
         return listOf(
-            "logo", "avatar", "banner", "placeholder", "no-image", "no_image", "noimage", "default-cover",
+            "logo",
+            "avatar",
+            "banner",
+            "placeholder",
+            "no-image",
+            "no_image",
+            "noimage",
+            "default-cover",
         ).any(normalized::contains)
     }
 
