@@ -1,4 +1,4 @@
-name: Build VoraToon Personal Extension
+name: Build and Publish VoraToon Personal
 
 on:
   push:
@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: build-voratoon-personal-${{ github.ref }}
@@ -25,9 +25,9 @@ concurrency:
 
 jobs:
   build:
-    name: Build VoraToon extension
+    name: Build and publish VoraToon
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Checkout source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,7 +43,18 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
 
+      - name: Prepare stable signing key if configured
+        if: ${{ secrets.SIGNING_KEY != '' }}
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        run: |
+          echo "$SIGNING_KEY" | base64 -d > signingkey.jks
+
       - name: Build VoraToon extension
+        env:
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew :src:id:voratoon:assembleRelease
 
       - name: Upload extension APK
@@ -53,3 +64,73 @@ jobs:
           path: src/id/voratoon/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 7
+
+      - name: Prepare personal Mihon repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find src/id/voratoon/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          test -n "$APK"
+          FILENAME="$(basename "$APK")"
+          APKSIGNER="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$APKSIGNER"
+          FINGERPRINT="$("$APKSIGNER" verify --print-certs "$APK" | awk -F': ' '/Signer #1 certificate SHA-256 digest/ {print tolower($2)}' | tr -d ':')"
+          test "${#FINGERPRINT}" -eq 64
+
+          PUBLISH_DIR="$RUNNER_TEMP/voratoon-repo"
+          mkdir -p "$PUBLISH_DIR/apk"
+          cp "$APK" "$PUBLISH_DIR/apk/$FILENAME"
+
+          python3 - "$PUBLISH_DIR" "$FILENAME" "$FINGERPRINT" <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          apk = sys.argv[2]
+          fingerprint = sys.argv[3]
+          entry = [{
+              "name": "VoraToon Personal",
+              "pkg": "eu.kanade.tachiyomi.extension.id.ayounkworks.voratoonpersonal",
+              "apk": apk,
+              "lang": "id",
+              "code": 88,
+              "version": "1.6.88",
+              "nsfw": 0,
+              "hasReadme": 0,
+              "hasChangelog": 0,
+              "sources": [{
+                  "id": 158530748440709235,
+                  "lang": "id",
+                  "name": "VoraToon Personal",
+                  "baseUrl": "https://voratoon.co",
+                  "versionId": 88
+              }]
+          }]
+          (root / "index.json").write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          (root / "index.min.json").write_text(json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+          repo = {"meta": {
+              "name": "Ayounkworks VoraToon Personal",
+              "shortName": "VoraToon Personal",
+              "website": "https://github.com/ayounkworks/extensions-source",
+              "signingKeyFingerprint": fingerprint
+          }}
+          (root / "repo.json").write_text(json.dumps(repo, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          (root / "README.md").write_text(
+              "# VoraToon Personal\n\nAdd this URL in Mihon → Settings → Browse → Extension repos:\n\n"
+              "https://raw.githubusercontent.com/ayounkworks/extensions-source/repo/index.min.json\n",
+              encoding="utf-8"
+          )
+          PY
+
+      - name: Publish repository branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/voratoon-repo"
+          git init --initial-branch=repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "Publish VoraToon Personal extension"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force origin repo
