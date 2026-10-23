@@ -5,9 +5,10 @@ plugins {
 }
 
 keiyoushi {
-    name = "VoraToon"
-    pkgName = "id.komikcast"
-    versionCode = 87
+    name = "VoraToon Personal"
+    // Unique application ID suffix so this private build can coexist with the official source.
+    pkgName = "id.ayounkworks.voratoonpersonal"
+    versionCode = 88
     contentWarning = ContentWarning.SAFE
     libVersion = "1.6"
 
@@ -18,8 +19,9 @@ keiyoushi {
     source {
         lang = "id"
         baseUrl {
-            custom("https://v8.voratoon.com")
+            custom("https://voratoon.co")
         }
-        id = 972717448578983812L
+        // Distinct source ID for this personal fork.
+        id = 158530748440709235L
     }
 }
