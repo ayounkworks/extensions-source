@@ -5,9 +5,9 @@ plugins {
 }
 
 keiyoushi {
-    name = "VoraToon"
-    pkgName = "id.komikcast"
-    versionCode = 87
+    name = "VoraToon Personal"
+    pkgName = "id.ayounkworks.voratoon"
+    versionCode = 1
     contentWarning = ContentWarning.SAFE
     libVersion = "1.6"
 
@@ -18,8 +18,8 @@ keiyoushi {
     source {
         lang = "id"
         baseUrl {
-            custom("https://v8.voratoon.com")
+            custom("https://v10.voratoon.com")
         }
-        id = 972717448578983812L
+        id = 10430526313348178L
     }
 }
