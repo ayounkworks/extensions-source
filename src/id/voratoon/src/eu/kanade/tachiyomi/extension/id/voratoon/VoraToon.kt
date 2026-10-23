@@ -368,8 +368,7 @@ abstract class VoraToon : KeiSource() {
         return null
     }
 
-    private fun normalizeLabelText(value: String): String =
-        value.trim().replace(Regex("""^[^\p{L}\p{N}]+"""), "").trim()
+    private fun normalizeLabelText(value: String): String = value.trim().replace(Regex("""^[^\p{L}\p{N}]+"""), "").trim()
 
     private fun cleanMetadataValue(value: String?): String? {
         val text = value?.replace(Regex("""\s+"""), " ")?.trim()
