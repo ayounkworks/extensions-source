@@ -21,7 +21,7 @@ keiyoushi {
         baseUrl {
             custom("https://voratoon.co")
         }
-        // Distinct source ID for this personal fork.
+        // Keep the original source ID to preserve the existing library association.
         id = 972717448578983812L
     }
 }
