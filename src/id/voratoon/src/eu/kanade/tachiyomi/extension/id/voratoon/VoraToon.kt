@@ -532,7 +532,7 @@ abstract class VoraToon : KeiSource() {
 
             // srcset values may contain multiple URLs and width/density descriptors.
             val candidate = if (attribute.endsWith("srcset")) {
-                raw.substringBefore(',').trim().split(Regex("""\\s+""")).firstOrNull().orEmpty()
+                raw.substringBefore(',').trim().split(Regex("""\s+""")).firstOrNull().orEmpty()
             } else {
                 raw
             }
@@ -588,7 +588,7 @@ abstract class VoraToon : KeiSource() {
 
         private val SERIES_LINK_REGEX = Regex(""".*/series/([A-Za-z0-9_-]+)$""")
         private val COVER_CONTEXT_REGEX = Regex(
-            """\\b(cover|poster|thumbnail|series[-_ ]?image|manga[-_ ]?image|book[-_ ]?cover)\\b""",
+            """\b(cover|poster|thumbnail|series[-_ ]?image|manga[-_ ]?image|book[-_ ]?cover)\b""",
             RegexOption.IGNORE_CASE,
         )
         private val READER_IMAGE_REGEX = Regex(
