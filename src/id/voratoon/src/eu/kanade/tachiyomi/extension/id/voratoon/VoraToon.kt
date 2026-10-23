@@ -260,11 +260,10 @@ abstract class VoraToon : KeiSource() {
         !url.contains("avatar", ignoreCase = true) &&
         !url.contains("banner", ignoreCase = true)
 
-    private fun cleanUrl(url: String): String =
-        url.replace("\\u0026", "&")
-            .replace("&amp;", "&")
-            .replace("\\/", "/")
-            .trimEnd('\\', '"', '\'', ',', ')')
+    private fun cleanUrl(url: String): String = url.replace("\\u0026", "&")
+        .replace("&amp;", "&")
+        .replace("\\/", "/")
+        .trimEnd('\\', '"', '\'', ',', ')')
 
     private companion object {
         private const val USER_AGENT =
