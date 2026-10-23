@@ -78,7 +78,7 @@ jobs:
           FILENAME_JAR="$(basename "$JAR")"
           APKSIGNER="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -x "$APKSIGNER"
-          FINGERPRINT="$("$APKSIGNER" verify --print-certs "$APK" | awk -F': ' '/Signer #1 certificate SHA-256 digest/ {print tolower($2)}' | tr -d ':')"
+          FINGERPRINT="$("$APKSIGNER" verify --print-certs "$APK" | awk -F': ' '/certificate SHA-256 digest/ {print tolower($NF); exit}' | tr -d ':[:space:]')"
           test "${#FINGERPRINT}" -eq 64
 
           PUBLISH_DIR="$RUNNER_TEMP/voratoon-repo"
