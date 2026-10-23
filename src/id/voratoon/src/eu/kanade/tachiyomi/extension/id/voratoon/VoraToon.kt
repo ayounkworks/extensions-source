@@ -136,13 +136,11 @@ abstract class VoraToon : KeiSource() {
         val images = card.select(
             "img[src], img[data-src], img[data-lazy-src], img[data-original], img[data-original-src], img[data-srcset], img[srcset]",
         )
-        val image = images.firstNotNullOfOrNull { element ->
-            val candidate = imageUrl(element) ?: return@firstNotNullOfOrNull null
-            if (isCoverImage(element, candidate)) candidate else null
-        }?.let { candidate ->
-            images.firstOrNull { imageUrl(it) == candidate }
-        } ?: images.firstNotNullOfOrNull { element ->
-            imageUrl(element)?.takeUnless(::isPlaceholderImage)?.let { element }
+        val image = images.firstOrNull { element ->
+            val candidate = imageUrl(element) ?: return@firstOrNull false
+            isCoverImage(element, candidate)
+        } ?: images.firstOrNull { element ->
+            imageUrl(element) != null
         }
         val title = card.selectFirst("a[class*=title]")?.text()?.trim()
             ?.takeIf { it.isNotBlank() }
