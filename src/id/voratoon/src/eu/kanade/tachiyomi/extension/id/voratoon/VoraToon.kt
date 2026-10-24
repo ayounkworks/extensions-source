@@ -735,14 +735,28 @@ abstract class VoraToon : KeiSource() {
 
     private fun imageKey(url: String): String {
         val parsed = url.toHttpUrlOrNull()
-        return parsed?.newBuilder()
-            ?.query(null)
-            ?.fragment(null)
-            ?.build()
-            ?.toString()
-            ?.trimEnd('/')
-            ?.lowercase()
-            ?: url.substringBefore('?').substringBefore('#').trimEnd('/').lowercase()
+            ?: return url.substringBefore('#').trimEnd('/').lowercase()
+
+        // Image proxy endpoints (for example /_next/image?url=...) use the query
+        // to identify the real file. Normalize to that file instead of collapsing
+        // every proxied image on the same endpoint into one key.
+        val proxySource = parsed.queryParameter("url")
+        if (!proxySource.isNullOrBlank()) {
+            val resolvedSource = parsed.resolve(proxySource)
+            if (resolvedSource != null && resolvedSource.toString() != url) {
+                return imageKey(resolvedSource.toString())
+            }
+        }
+
+        // Drop common resizing/format parameters but preserve identity parameters
+        // such as ?id=..., which may select a different image on the same path.
+        val transformParameters = setOf("w", "h", "width", "height", "q", "quality", "format", "auto", "fit", "crop", "dpr")
+        val builder = parsed.newBuilder().fragment(null)
+        parsed.queryParameterNames()
+            .filter { it.lowercase() in transformParameters }
+            .forEach { builder.removeAllQueryParameters(it) }
+
+        return builder.build().toString().trimEnd('/').lowercase()
     }
 
     private fun isCoverImageUrl(url: String): Boolean {
