@@ -431,8 +431,8 @@ abstract class VoraToon : KeiSource() {
         }
 
         val embeddedHtml = document.html()
-            .replace("\\\\/", "/")
-            .replace("\\\\u0026", "&")
+            .replace("\\/", "/")
+            .replace("\\u0026", "&")
             .replace("&amp;", "&")
         READER_IMAGE_REGEX.findAll(embeddedHtml)
             .map { cleanUrl(it.value) }
