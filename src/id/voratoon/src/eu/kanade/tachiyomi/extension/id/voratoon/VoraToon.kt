@@ -408,13 +408,31 @@ abstract class VoraToon : KeiSource() {
         val url = "$baseUrl/series/$slug/chapter/$chapterIndex"
         val document = client.get(url).asJsoup()
         val candidates = linkedSetOf<String>()
+        val knownCoverUrls = linkedSetOf<String>()
 
-        document.select("img[src], img[data-src], img[data-lazy-src], img[data-original]")
-            .mapNotNullTo(candidates) { imageUrl(it) }
+        // Chapter pages may include the series cover in metadata or in an image
+        // element outside the reader. Record those URLs before scanning embedded scripts.
+        document.select(
+            "meta[property=og:image], meta[name=twitter:image], meta[property=twitter:image], meta[name=twitter:image:src]",
+        ).mapNotNull { element ->
+            absoluteImageUrl(element.attr("content"), document.location())
+        }.forEach { knownCoverUrls += imageKey(it) }
+
+        val imageElements = document.select(
+            "img[src], img[data-src], img[data-lazy-src], img[data-original], img[data-original-src], img[data-srcset], img[srcset]",
+        )
+        imageElements.forEach { element ->
+            val imageUrl = imageUrl(element) ?: return@forEach
+            if (isCoverImage(element, imageUrl)) {
+                knownCoverUrls += imageKey(imageUrl)
+            } else {
+                candidates += imageUrl
+            }
+        }
 
         val embeddedHtml = document.html()
-            .replace("\\/", "/")
-            .replace("\\u0026", "&")
+            .replace("\\\\/", "/")
+            .replace("\\\\u0026", "&")
             .replace("&amp;", "&")
         READER_IMAGE_REGEX.findAll(embeddedHtml)
             .map { cleanUrl(it.value) }
@@ -423,6 +441,7 @@ abstract class VoraToon : KeiSource() {
 
         return candidates
             .filter(::isReaderImage)
+            .filterNot { imageKey(it) in knownCoverUrls }
             .distinct()
             .mapIndexed { index, imageUrl -> Page(index, imageUrl = imageUrl) }
     }
@@ -688,7 +707,7 @@ abstract class VoraToon : KeiSource() {
 
     private fun isCoverImage(element: Element, candidate: String): Boolean {
         if (isPlaceholderImage(candidate)) return false
-        if (candidate.contains("/cover/", ignoreCase = true)) return true
+        if (isCoverImageUrl(candidate)) return true
 
         val context = (
             element.parents().map { "${it.id()} ${it.className()}" } +
@@ -714,9 +733,27 @@ abstract class VoraToon : KeiSource() {
     private fun seriesSlug(href: String): String? = SERIES_LINK_REGEX.find(href.substringBefore('?').substringBefore('#').trimEnd('/'))
         ?.groupValues?.getOrNull(1)
 
+    private fun imageKey(url: String): String {
+        val parsed = url.toHttpUrlOrNull()
+        return parsed?.newBuilder()
+            ?.query(null)
+            ?.fragment(null)
+            ?.build()
+            ?.toString()
+            ?.trimEnd('/')
+            ?.lowercase()
+            ?: url.substringBefore('?').substringBefore('#').trimEnd('/').lowercase()
+    }
+
+    private fun isCoverImageUrl(url: String): Boolean {
+        val path = url.toHttpUrlOrNull()?.encodedPath
+            ?: url.substringBefore('?').substringBefore('#')
+        return COVER_URL_REGEX.containsMatchIn(path)
+    }
+
     private fun isReaderImage(url: String): Boolean = url.contains("voratoon", ignoreCase = true) &&
         IMAGE_EXTENSION_REGEX.containsMatchIn(url) &&
-        !url.contains("/cover/", ignoreCase = true) &&
+        !isCoverImageUrl(url) &&
         !url.contains("logo", ignoreCase = true) &&
         !url.contains("avatar", ignoreCase = true) &&
         !url.contains("banner", ignoreCase = true)
@@ -733,6 +770,10 @@ abstract class VoraToon : KeiSource() {
         private val SERIES_LINK_REGEX = Regex(""".*/series/([A-Za-z0-9_-]+)$""")
         private val COVER_CONTEXT_REGEX = Regex(
             """\b(cover|poster|thumbnail|series[-_ ]?image|manga[-_ ]?image|book[-_ ]?cover)\b""",
+            RegexOption.IGNORE_CASE,
+        )
+        private val COVER_URL_REGEX = Regex(
+            """(?:^|[/_.-])(?:cover|covers|poster|posters|thumbnail|thumbnails|series[-_]?image|manga[-_]?image|book[-_]?cover)(?:$|[/_.#?%-])""",
             RegexOption.IGNORE_CASE,
         )
         private val READER_IMAGE_REGEX = Regex(
