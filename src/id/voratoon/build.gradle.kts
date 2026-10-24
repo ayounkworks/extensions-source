@@ -8,7 +8,7 @@ keiyoushi {
     name = "VoraToon"
     // Unique application ID suffix so this private build can coexist with the official source.
     pkgName = "id.ayounkworks.voratoonpersonal"
-    versionCode = 98
+    versionCode = 99
     contentWarning = ContentWarning.SAFE
     libVersion = "1.6"
 
