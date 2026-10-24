@@ -1,0 +1,33 @@
+{
+  "name": "VoraToon Personal",
+  "badgeLabel": "VORA",
+  "signingKey": "8f261f5b325fe2f871163809bab45d9be73593285a822949846c49e01c04b810",
+  "contact": {
+    "website": "https://github.com/ayounkworks/extensions-source"
+  },
+  "extensionList": {
+    "extensions": [
+      {
+        "name": "VoraToon",
+        "packageName": "eu.kanade.tachiyomi.extension.id.ayounkworks.voratoonpersonal",
+        "resources": {
+          "apkUrl": "https://raw.githubusercontent.com/ayounkworks/extensions-source/repo/tachiyomi-id.ayounkworks.voratoonpersonal-v1.6.101.apk",
+          "iconUrl": "https://raw.githubusercontent.com/ayounkworks/extensions-source/repo/icon.png",
+          "jarUrl": "https://raw.githubusercontent.com/ayounkworks/extensions-source/repo/tachiyomi-id.ayounkworks.voratoonpersonal-v1.6.101.jar"
+        },
+        "extensionLib": "1.6",
+        "versionCode": "106101",
+        "versionName": "1.6.101",
+        "contentWarning": "CONTENT_WARNING_SAFE",
+        "sources": [
+          {
+            "id": "972717448578983812",
+            "name": "VoraToon",
+            "language": "id",
+            "homeUrl": "https://voratoon.co"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "index_v2": "https://raw.githubusercontent.com/ayounkworks/extensions-source/repo/index.pb",
+  "meta": {
+    "name": "VoraToon Personal",
+    "shortName": "VoraToon",
+    "website": "https://github.com/ayounkworks/extensions-source",
+    "signingKeyFingerprint": "8f261f5b325fe2f871163809bab45d9be73593285a822949846c49e01c04b810"
+  }
+}
