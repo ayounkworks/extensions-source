@@ -103,9 +103,11 @@ class ChapterItem(
         chapter_number = index
     }
 
-    fun toPageList(): List<Page> = data.images?.mapIndexed { index, imageUrl ->
-        Page(index, imageUrl = imageUrl)
-    } ?: emptyList()
+    fun toPageList(): List<Page> = data.images
+        ?.distinctBy { it.substringBefore('?').trimEnd('/') }
+        ?.dropLastWhile { it.substringBefore('?').contains("cover", ignoreCase = true) }
+        ?.mapIndexed { index, imageUrl -> Page(index, imageUrl = imageUrl) }
+        ?: emptyList()
 }
 
 @Serializable
