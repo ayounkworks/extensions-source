@@ -752,7 +752,7 @@ abstract class VoraToon : KeiSource() {
         // such as ?id=..., which may select a different image on the same path.
         val transformParameters = setOf("w", "h", "width", "height", "q", "quality", "format", "auto", "fit", "crop", "dpr")
         val builder = parsed.newBuilder().fragment(null)
-        parsed.queryParameterNames()
+        parsed.queryParameterNames
             .filter { it.lowercase() in transformParameters }
             .forEach { builder.removeAllQueryParameters(it) }
 
