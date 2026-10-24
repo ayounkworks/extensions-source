@@ -255,15 +255,26 @@ abstract class VoraToon : KeiSource() {
         val slug = seriesSlug(manga.url) ?: manga.url.substringAfterLast('/')
         val apiManga = if (fetchDetails) fetchApiMangaDetails(slug) else null
 
-        // Keep the HTML path as a fallback and for metadata that the API does not expose.
-        val document = client.get(getMangaUrl(manga)).asJsoup()
-        val htmlManga = if (fetchDetails) parseMangaDetails(document, manga) else manga
+        // The API can work when the website HTML is temporarily unavailable.
+        // Keep HTML optional so it cannot discard valid API results or saved chapter data.
+        val mangaUrl = getMangaUrl(manga)
+        val document = runCatching { client.get(mangaUrl).asJsoup() }.getOrNull()
+        val pageUrl = document?.location() ?: mangaUrl
+        val htmlManga = if (fetchDetails && document != null) {
+            parseMangaDetails(document, manga)
+        } else {
+            manga
+        }
         val updatedManga = if (fetchDetails && apiManga != null) {
-            mergeMangaDetails(apiManga, htmlManga, manga, document.location())
+            mergeMangaDetails(apiManga, htmlManga, manga, pageUrl)
         } else {
             htmlManga
         }
-        val updatedChapters = if (fetchChapters) parseChapters(document, slug) else chapters
+        val updatedChapters = if (fetchChapters) {
+            document?.let { parseChapters(it, slug) } ?: chapters
+        } else {
+            chapters
+        }
         return SMangaUpdate(updatedManga, updatedChapters)
     }
 
