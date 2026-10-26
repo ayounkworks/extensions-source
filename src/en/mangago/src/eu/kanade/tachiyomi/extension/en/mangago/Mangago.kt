@@ -464,7 +464,10 @@ abstract class Mangago :
                 value.ifEmpty { "0" }.toIntOrNull()
                     ?: throw IOException("Invalid Mangago image descrambling key")
             }
-            if (keyPositions.any { it !in 0 until tileCount } || keyPositions.distinct().size != tileCount) {
+            if (
+                keyPositions.any { it !in 0 until tileCount } ||
+                keyPositions.distinct().size != tileCount
+            ) {
                 throw IOException("Invalid Mangago image descrambling positions")
             }
 
