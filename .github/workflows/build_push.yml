@@ -136,8 +136,38 @@ jobs:
           cache-read-only: true
 
       - name: Prepare signing key
+        shell: bash
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          echo ${{ secrets.SIGNING_KEY }} | base64 -d > signingkey.jks
+          if [[ -z "$SIGNING_KEY" ]]; then
+            if [[ "$GITHUB_REPOSITORY" == "keiyoushi/extensions-source" ]]; then
+              echo "::error::SIGNING_KEY is required for release builds in the upstream repository."
+              exit 1
+            fi
+            echo "SIGNING_KEY is unavailable on a fork; using debug signing for build validation."
+            exit 0
+          fi
+
+          if [[ -z "$ALIAS" || -z "$KEY_STORE_PASSWORD" || -z "$KEY_PASSWORD" ]]; then
+            echo "::error::ALIAS, KEY_STORE_PASSWORD, and KEY_PASSWORD are required when SIGNING_KEY is configured."
+            exit 1
+          fi
+
+          printf '%s' "$SIGNING_KEY" | base64 --decode > signingkey.jks
+          if [[ ! -s signingkey.jks ]]; then
+            echo "::error::SIGNING_KEY decoded to an empty keystore."
+            exit 1
+          fi
+
+          if ! keytool -list -keystore signingkey.jks -storepass "$KEY_STORE_PASSWORD" -alias "$ALIAS" >/dev/null 2>&1; then
+            echo "::error::Keystore validation failed. Check SIGNING_KEY, ALIAS, and KEY_STORE_PASSWORD."
+            rm -f signingkey.jks
+            exit 1
+          fi
 
       - name: Build extensions (${{ matrix.chunk.number }})
         env:
@@ -165,7 +195,7 @@ jobs:
 
       - name: Clean up CI files
         if: always()
-        run: rm signingkey.jks
+        run: rm -f signingkey.jks
 
   publish:
     name: Publish extension repo
