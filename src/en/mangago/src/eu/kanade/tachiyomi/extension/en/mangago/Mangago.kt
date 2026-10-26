@@ -50,6 +50,7 @@ import okhttp3.ResponseBody
 import okhttp3.ResponseBody.Companion.asResponseBody
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.io.IOException
 import java.io.InputStream
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -326,11 +327,15 @@ abstract class Mangago :
     private fun imageDescrambler(chain: Interceptor.Chain): Response {
         val request = chain.request()
         val response = chain.proceed(request)
+        if (!response.isSuccessful) return response
+
         val fragment = request.url.fragment
             ?.takeIf { it.contains("desckey=") }
             ?: return response
         val key = fragment.substringAfter("desckey=").substringBefore("&")
-        val cols = fragment.substringAfter("&cols=").toIntOrNull() ?: return response
+        val cols = fragment.substringAfter("&cols=").toIntOrNull()
+            ?.takeIf { it in 1..64 }
+            ?: return response
         val body = response.body.byteStream().use { unscrambleImage(it, key, cols) }
 
         return response.newBuilder()
@@ -439,34 +444,63 @@ abstract class Mangago :
     }
 
     private fun unscrambleImage(image: InputStream, key: String, cols: Int): ResponseBody {
+        if (cols !in 1..64) throw IOException("Invalid Mangago image grid size: $cols")
+
         val bitmap = BitmapFactory.decodeStream(image)
-        val result = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(result)
-        val unitWidth = bitmap.width / cols
-        val unitHeight = bitmap.height / cols
-        val keyArray = key.split("a")
+            ?: throw IOException("Unable to decode Mangago image for descrambling")
 
-        for (index in 0 until cols * cols) {
-            val keyValue = keyArray[index].ifEmpty { "0" }.toInt()
-            val destinationRow = keyValue.floorDiv(cols)
-            val sourceRow = index.floorDiv(cols)
-            val sourceX = (index - sourceRow * cols) * unitWidth
-            val sourceY = sourceRow * unitHeight
-            val destinationX = (keyValue - destinationRow * cols) * unitWidth
-            val destinationY = destinationRow * unitHeight
-            canvas.drawBitmap(
-                bitmap,
-                Rect(sourceX, sourceY, sourceX + unitWidth, sourceY + unitHeight),
-                Rect(destinationX, destinationY, destinationX + unitWidth, destinationY + unitHeight),
-                null,
-            )
+        try {
+            if (cols > bitmap.width || cols > bitmap.height) {
+                throw IOException("Mangago image is smaller than its descrambling grid")
+            }
+
+            val tileCount = cols * cols
+            val keyArray = key.split("a")
+            if (keyArray.size < tileCount) {
+                throw IOException("Incomplete Mangago image descrambling key")
+            }
+
+            val keyPositions = keyArray.take(tileCount).map { value ->
+                value.ifEmpty { "0" }.toIntOrNull()
+                    ?: throw IOException("Invalid Mangago image descrambling key")
+            }
+            if (keyPositions.any { it !in 0 until tileCount } || keyPositions.distinct().size != tileCount) {
+                throw IOException("Invalid Mangago image descrambling positions")
+            }
+
+            val result = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+            try {
+                val canvas = Canvas(result)
+                val unitWidth = bitmap.width / cols
+                val unitHeight = bitmap.height / cols
+
+                for (index in 0 until tileCount) {
+                    val keyValue = keyPositions[index]
+                    val destinationRow = keyValue.floorDiv(cols)
+                    val sourceRow = index.floorDiv(cols)
+                    val sourceX = (index - sourceRow * cols) * unitWidth
+                    val sourceY = sourceRow * unitHeight
+                    val destinationX = (keyValue - destinationRow * cols) * unitWidth
+                    val destinationY = destinationRow * unitHeight
+                    canvas.drawBitmap(
+                        bitmap,
+                        Rect(sourceX, sourceY, sourceX + unitWidth, sourceY + unitHeight),
+                        Rect(destinationX, destinationY, destinationX + unitWidth, destinationY + unitHeight),
+                        null,
+                    )
+                }
+
+                val buffer = okio.Buffer()
+                if (!result.compress(Bitmap.CompressFormat.JPEG, 90, buffer.outputStream())) {
+                    throw IOException("Failed to encode descrambled Mangago image")
+                }
+                return buffer.asResponseBody("image/jpeg".toMediaTypeOrNull())
+            } finally {
+                result.recycle()
+            }
+        } finally {
+            bitmap.recycle()
         }
-
-        val buffer = okio.Buffer()
-        result.compress(Bitmap.CompressFormat.JPEG, 90, buffer.outputStream())
-        bitmap.recycle()
-        result.recycle()
-        return buffer.asResponseBody("image/jpeg".toMediaTypeOrNull())
     }
 
     private fun Element.imgAttr() = when {
