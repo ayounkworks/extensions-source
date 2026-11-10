@@ -182,3 +182,5 @@ jobs:
           git commit -m "Publish VoraToon Personal extension repository"
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push --force origin repo
+
+# CI validation trigger: build and lint only; publishing remains restricted to the personal upstream branch.
