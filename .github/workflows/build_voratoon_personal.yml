@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/voratoon-upstream-sync
+      - fix/voratoon-personal-rsc-migration
     paths:
       - "src/id/voratoon/**"
       - ".github/workflows/build_voratoon_personal.yml"
@@ -48,7 +49,7 @@ jobs:
           ALIAS: ${{ secrets.ALIAS }}
           KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: ./gradlew :src:id:voratoon:assembleRelease
+        run: ./gradlew :src:id:voratoon:assembleRelease :src:id:voratoon:lintRelease
 
       - name: Upload build artifact as backup
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -167,6 +168,7 @@ jobs:
           PY
 
       - name: Publish repository branch
+        if: github.ref == 'refs/heads/fix/voratoon-upstream-sync'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
