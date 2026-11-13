@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
+import keiyoushi.network.Fetch
 import keiyoushi.network.get
 import keiyoushi.network.post
 import keiyoushi.network.rateLimit
@@ -19,6 +20,7 @@ import keiyoushi.utils.toJsonElement
 import keiyoushi.utils.tryParseDate
 import keiyoushi.utils.ui.askPassword
 import kotlinx.serialization.json.JsonElement
+import okhttp3.CacheControl
 import okhttp3.FormBody
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -36,7 +38,6 @@ import java.util.concurrent.ConcurrentHashMap
 
 @Source
 abstract class MeDamTruyen : KeiSource() {
-
     override fun OkHttpClient.Builder.configureClient(): OkHttpClient.Builder = apply {
         addInterceptor(thumbnailFallbackInterceptor)
         rateLimit(3)
@@ -61,7 +62,7 @@ abstract class MeDamTruyen : KeiSource() {
     // ============================== Popular ===============================
 
     override suspend fun getPopularManga(page: Int): MangasPage {
-        val document = client.get(baseUrl).asJsoup()
+        val document = client.get(baseUrl, Fetch.DOCUMENT).asJsoup()
         val mangas = document.select("#day-charts .sidebar-comic-block")
             .mapNotNull(::popularMangaFromElement)
             .distinctBy { it.url }
@@ -87,7 +88,7 @@ abstract class MeDamTruyen : KeiSource() {
             .addQueryParameter("trang", page.toString())
             .build()
 
-        return parseBrowsePage(client.get(url))
+        return parseBrowsePage(client.get(url, Fetch.DOCUMENT))
     }
 
     // ============================== Search ================================
@@ -99,7 +100,7 @@ abstract class MeDamTruyen : KeiSource() {
                 .add("keyword", query)
                 .build()
 
-            return parseSearchApiResponse(client.post("$baseUrl/wp-admin/admin-ajax.php", body = formBody))
+            return parseSearchApiResponse(client.post("$baseUrl/wp-admin/admin-ajax.php", Fetch.XHR, body = formBody))
         }
 
         val filterPath = filters.firstInstanceOrNull<GenreFilter>()?.toUriPart()
@@ -111,7 +112,7 @@ abstract class MeDamTruyen : KeiSource() {
                 .addQueryParameter("trang", page.toString())
                 .build()
 
-            return parseBrowsePage(client.get(url))
+            return parseBrowsePage(client.get(url, Fetch.XHR))
         }
 
         return getLatestUpdates(page)
@@ -179,7 +180,7 @@ abstract class MeDamTruyen : KeiSource() {
         val detailUrl = if (pathSegments.firstOrNull() == "truyen") {
             url
         } else if (isChapterUrl) {
-            client.get(url).asJsoup()
+            client.get(url, Fetch.DOCUMENT).asJsoup()
                 .selectFirst("a[href*=/truyen/]:matchesOwn(^DS\\. Chương$), a[href*=/truyen/]")
                 ?.absUrl("href")
                 ?.toHttpUrl()
@@ -206,7 +207,7 @@ abstract class MeDamTruyen : KeiSource() {
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
-        val document = client.get(getMangaUrl(manga)).asJsoup()
+        val document = client.get(getMangaUrl(manga), Fetch.DOCUMENT).asJsoup()
         return SMangaUpdate(
             manga = parseMangaDetails(document, manga),
             chapters = parseChapterList(document),
@@ -297,7 +298,8 @@ abstract class MeDamTruyen : KeiSource() {
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
         val chapterUrl = getChapterUrl(chapter)
-        val response = client.get(chapterUrl)
+        // Locked pages are cacheable (max-age, no Vary: Cookie) — skip disk cache.
+        val response = client.get(chapterUrl, Fetch.DOCUMENT, CacheControl.FORCE_NETWORK)
         var html = response.body.string()
         var document = Jsoup.parse(html, chapterUrl)
 
@@ -328,15 +330,8 @@ abstract class MeDamTruyen : KeiSource() {
                 .set("Referer", chapterUrl)
                 .build()
 
-            val postResponse = client.post(postAction, postHeaders, formBody, ensureSuccess = false)
-            val responseUrl = postResponse.request.url.toString()
-            val responseBody = postResponse.body.string()
-
-            html = if (postResponse.isSuccessful && !responseUrl.contains("wp-login.php")) {
-                responseBody
-            } else {
-                client.get(chapterUrl).body.string()
-            }
+            client.post(postAction, postHeaders, Fetch.DOCUMENT, formBody, ensureSuccess = false).close()
+            html = client.get(chapterUrl, Fetch.DOCUMENT, CacheControl.FORCE_NETWORK).body.string()
 
             document = Jsoup.parse(html, chapterUrl)
             if (document.selectFirst("form.post-password-form") != null) {
@@ -359,7 +354,7 @@ abstract class MeDamTruyen : KeiSource() {
         return raw.replaceFirst(hintColonRegex, "$1\n").trim()
     }
 
-    override fun imageRequest(page: Page): Request {
+    override fun getImageRequest(page: Page): Request {
         val imageHeaders = headers.newBuilder()
             .set("Referer", page.url)
             .build()
@@ -371,7 +366,7 @@ abstract class MeDamTruyen : KeiSource() {
 
     override val supportsFilterFetching get() = true
 
-    override suspend fun fetchFilterData() = client.get(baseUrl).asJsoup().let { document ->
+    override suspend fun fetchFilterData() = client.get(baseUrl, Fetch.DOCUMENT).asJsoup().let { document ->
         FilterData(
             genres = parseFilterOptions(document, "#genre-tab"),
             groups = parseFilterOptions(document, "#team-tab"),
@@ -392,7 +387,7 @@ abstract class MeDamTruyen : KeiSource() {
     override val supportsRelatedMangas get() = true
 
     override suspend fun fetchRelatedMangaList(manga: SManga): List<SManga> {
-        val document = client.get(getMangaUrl(manga)).asJsoup()
+        val document = client.get(getMangaUrl(manga), Fetch.DOCUMENT).asJsoup()
         val relatedList = document.select("h3")
             .firstOrNull { it.text().equals("Truyện Liên Quan", ignoreCase = true) }
             ?.parent()

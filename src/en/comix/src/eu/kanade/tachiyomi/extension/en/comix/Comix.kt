@@ -20,6 +20,8 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
+import keiyoushi.network.Fetch
+import keiyoushi.network.get
 import keiyoushi.network.rateLimit
 import keiyoushi.source.KeiSource
 import keiyoushi.utils.NativeWebViewApi
@@ -49,7 +51,6 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -135,7 +136,8 @@ abstract class Comix :
             }
             response
         }
-        .rateLimit(2) { it.host == baseUrlHost }
+        // Covers are cached static files
+        .rateLimit(2) { it.host == baseUrlHost && !it.encodedPath.startsWith("/images/covers/") }
         .rateLimit(2) { it.isPageImage() }
         .rateLimit(5)
 
@@ -182,8 +184,6 @@ abstract class Comix :
         return response
     }
 
-    override fun Headers.Builder.configureHeaders() = add("Accept", "*/*")
-
     override suspend fun getPopularManga(page: Int): MangasPage {
         val url = baseUrl.toHttpUrl().newBuilder().apply {
             addPathSegment("browse")
@@ -195,35 +195,8 @@ abstract class Comix :
     }
 
     private suspend fun getMangaListFromBrowse(url: HttpUrl): MangasPage {
-        val contentRating = url.queryParameter("content_rating")
-            ?: preferences.contentRating()
-        val effectiveContentRating = contentRating
-            .split(',')
-            .lastOrNull { it.isNotBlank() }
-            .orEmpty()
-            .ifEmpty { "pornographic" }
-        val expectedKeyword = JSONObject.quote(
-            url.queryParameter("q") ?: url.queryParameter("keyword").orEmpty(),
-        )
         val searchResponse = runInWebView(
             url = url.toString(),
-            pageScript = { _, _, _ ->
-                """
-                (function () {
-                    const key = 'settings_v2';
-                    let settings = {};
-                    try {
-                        settings = JSON.parse(localStorage.getItem(key) || '{}');
-                    } catch (e) {}
-                    settings.state = {
-                        ...(settings.state || {}),
-                        contentFilter: '$effectiveContentRating'
-                    };
-                    if (settings.version === undefined) settings.version = 0;
-                    localStorage.setItem(key, JSON.stringify(settings));
-                })();
-                """.trimIndent()
-            },
             buildScript = { passPayloadName ->
                 """
                 (function () {
@@ -257,7 +230,7 @@ abstract class Comix :
         ).parseAs<SearchResponse>()
 
         val mangaList = searchResponse.result.items.map {
-            it.toBasicSManga(preferences.posterQuality())
+            it.toBasicSManga(baseUrl.toHttpUrl(), preferences.posterQuality())
         }
         return MangasPage(mangaList, searchResponse.result.hasNextPage())
     }
@@ -350,12 +323,16 @@ abstract class Comix :
         val cacheKey = "$type\u0000${name.lowercase()}"
         synchronized(tagIdCache) { tagIdCache[cacheKey] }?.let { return it }
 
-        val payload = runInWebView("$baseUrl/browse") { passPayloadName, rejectName, _ ->
-            "(${asset("tags_search.js")})(${asset("site_api.js")}, " +
-                "${JSONObject.quote(type)}, ${JSONObject.quote(name)}, " +
-                "window.$passPayloadName, window.$rejectName);"
-        }
-        val ids = payload.parseAs<TagSearchResponse>().result.map { it.id.toString() }
+        val url = baseUrl.toHttpUrl().newBuilder()
+            .addPathSegments("api/v1/tags/search")
+            .addQueryParameter("type", type)
+            .addQueryParameter("q", name)
+            .addQueryParameter("limit", "20")
+            .build()
+        val hits = client.get(url, Fetch.XHR).parseAs<TagSearchResponse>().result
+        if (hits.isEmpty()) throw Exception("No $type named \"$name\"")
+        // Exact names when the site's fuzzy search has them
+        val ids = hits.filter { it.label.equals(name, ignoreCase = true) }.ifEmpty { hits }.map { it.id.toString() }
         synchronized(tagIdCache) { tagIdCache[cacheKey] = ids }
         return ids
     }
@@ -454,6 +431,8 @@ abstract class Comix :
             buildScript = { passPayloadName ->
                 """
                 (function () {
+                    // script#initial-data is partial while the document is still parsing
+                    if (document.readyState === 'loading') return;
                     const raw = document.querySelector('script#initial-data')?.textContent;
                     if (raw) window.$passPayloadName(raw);
                 })();
@@ -481,6 +460,7 @@ abstract class Comix :
     }
 
     private fun parseMangaDetails(detail: Manga): SManga = detail.toSManga(
+        baseUrl.toHttpUrl(),
         preferences.posterQuality(),
         preferences.alternativeNamesInDescription(),
         preferences.scorePosition(),
@@ -500,7 +480,7 @@ abstract class Comix :
             ?: return emptyList()
 
         return related.parseAs<SearchResponse.Items>().items.map {
-            it.toBasicSManga(preferences.posterQuality())
+            it.toBasicSManga(baseUrl.toHttpUrl(), preferences.posterQuality())
         }
     }
 
@@ -522,6 +502,9 @@ abstract class Comix :
         val payload = runInWebView(getMangaUrl(manga), { it.isChapterListRequest() }) { passPayloadName, _, touchName ->
             """
             (function () {
+                // Only on the requested title's page
+                const titlePath = ${JSONObject.quote("/title/$mangaId")};
+                if (location.pathname !== titlePath && !location.pathname.startsWith(titlePath + '-')) return;
                 if (window.__comixA1ChaptersStarted) return;
                 window.__comixA1ChaptersStarted = true;
                 window.__comixHarvestOptions = {
@@ -631,13 +614,12 @@ abstract class Comix :
     private fun SChapter.groupId(): Int? = memo[CHAPTER_GROUP_ID_MEMO]?.int
 
     // Comix image domains block any image requests with Referer/Origin
-    override fun imageRequest(page: Page): Request {
+    override fun getImageRequest(page: Page): Request {
         // The reader may have moved the page to another host
         val imageUrl = synchronized(captures) { captures[page.url]?.pages?.get(page.index) }
             ?: page.imageUrl
-            ?: return super.imageRequest(page)
+            ?: return super.getImageRequest(page)
         val requestHeaders = headersBuilder()
-            .removeAll("Origin")
             .removeAll("Referer")
             .build()
         return GET(imageUrl, requestHeaders)
@@ -975,7 +957,7 @@ abstract class Comix :
         MultiSelectListPreference(screen.context).apply {
             key = PREF_DEFAULT_DEMOGRAPHICS
             title = "Default demographics"
-            summary = "Demographics to include in popular, latest, and search " +
+            summary = "Unticked demographics are hidden from popular, latest, and search " +
                 "results. The Demographic filter in search overrides this."
             entries = Filters.getDemographics().map { it.first }.toTypedArray()
             entryValues = Filters.getDemographics().map { it.second }.toTypedArray()
@@ -1072,7 +1054,7 @@ abstract class Comix :
 
     private fun SharedPreferences.defaultDemographics(): Set<String> {
         val all = Filters.getDemographics().map { it.second }.toSet()
-        return getStringSet(PREF_DEFAULT_DEMOGRAPHICS, all) ?: all
+        return getStringSet(PREF_DEFAULT_DEMOGRAPHICS, all)?.ifEmpty { all } ?: all
     }
 
     private fun SharedPreferences.blockedGenres(): Set<String> = getStringSet(PREF_BLOCKED_GENRES, emptySet()) ?: emptySet()
