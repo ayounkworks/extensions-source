@@ -74,37 +74,6 @@ jobs:
           BASE_SHA: ${{ steps.base.outputs.sha }}
         run: python ./.github/scripts/generate-build-matrices.py "$BASE_SHA"
 
-  build-shared:
-    name: Build shared modules
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-java@v4
-        with:
-          java-version: 25
-          distribution: temurin
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Build and lint shared modules
-        shell: bash
-        run: |
-          MODULES=(":core")
-          for dir in lib lib-multisrc; do
-            for build_file in "$dir"/*/build.gradle.kts; do
-              [ -f "$build_file" ] || continue
-              MODULES+=(":${dir}:$(basename "$(dirname "$build_file")")")
-            done
-          done
-          extension=$(find src -mindepth 2 -maxdepth 2 -type d | sort | head -n 1)
-          MODULES+=(":${extension//\//:}")
-          TASKS=()
-          for module in "${MODULES[@]}"; do
-            TASKS+=("${module}:assembleRelease" "${module}:lintRelease")
-          done
-          ./gradlew "${TASKS[@]}"
-
   build-extensions:
     name: Build extensions (${{ matrix.chunk.number }})
     needs: prepare
