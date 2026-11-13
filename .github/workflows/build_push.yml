@@ -122,6 +122,13 @@ jobs:
             TASKS+=("${module}:assembleRelease")
           done
           ./gradlew "${TASKS[@]}"
+      - name: Validate extension build outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          find . -path '*/build/keiyoushi-source-info.json' -print -quit | grep -q .
+          find . -path '*/build/outputs/apk/release/*.apk' -print -quit | grep -q .
+          find . -path '*/build/outputs/jar/release/*.jar' -print -quit | grep -q .
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
