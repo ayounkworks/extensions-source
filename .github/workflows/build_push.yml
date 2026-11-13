@@ -128,12 +128,15 @@ jobs:
       - name: Prepare signing key
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
         run: |
-          if [ -z "$SIGNING_KEY" ]; then
-            echo "SIGNING_KEY secret is not configured."
+          if [ -n "$SIGNING_KEY" ]; then
+            printf '%s' "$SIGNING_KEY" | base64 -d > signingkey.jks
+          else
+            echo "SIGNING_KEY secret is not configured; refusing release build."
             exit 1
           fi
-          printf '%s' "$SIGNING_KEY" | base64 -d > signingkey.jks
+          keytool -list -keystore signingkey.jks -storepass "$KEY_STORE_PASSWORD" >/dev/null
       - name: Build extensions
         env:
           MODULES: ${{ join(matrix.chunk.modules, ' ') }}
