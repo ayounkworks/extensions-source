@@ -6,8 +6,8 @@ plugins {
 
 keiyoushi {
     name = "VoraToon"
-    pkgName = "id.komikcast"
-    versionCode = 88
+    pkgName = "id.ayounkworks.voratoonpersonal"
+    versionCode = 103
     contentWarning = ContentWarning.SAFE
     libVersion = "1.6"
 
