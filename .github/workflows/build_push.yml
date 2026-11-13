@@ -101,6 +101,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ALIAS }}
+          EXPECTED_SIGNING_KEY: 8f261f5b325fe2f871163809bab45d9be73593285a822949846c49e01c04b810
         run: |
           set -euo pipefail
           if [ -z "$SIGNING_KEY" ] || [ -z "$KEY_STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ] || [ -z "$KEY_ALIAS" ]; then
@@ -109,6 +110,13 @@ jobs:
           fi
           printf '%s' "$SIGNING_KEY" | base64 -d > signingkey.jks
           keytool -list -keystore signingkey.jks -storepass "$KEY_STORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+          ACTUAL_SIGNING_KEY="$(keytool -exportcert -keystore signingkey.jks -storepass "$KEY_STORE_PASSWORD" -alias "$KEY_ALIAS" | sha256sum | awk '{print $1}')"
+          if [ "$ACTUAL_SIGNING_KEY" != "$EXPECTED_SIGNING_KEY" ]; then
+            echo "Signing certificate does not match the existing Mihon repository fingerprint."
+            echo "Expected: $EXPECTED_SIGNING_KEY"
+            echo "Actual:   $ACTUAL_SIGNING_KEY"
+            exit 1
+          fi
       - name: Build extensions
         env:
           MODULES: ${{ join(matrix.chunk.modules, ' ') }}
