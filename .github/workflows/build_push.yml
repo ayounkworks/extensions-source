@@ -46,12 +46,32 @@ jobs:
       matrix: ${{ steps.generate-matrices.outputs.matrix }}
       delete: ${{ steps.generate-matrices.outputs.delete }}
       full_rebuild: ${{ steps.base.outputs.full_rebuild || steps.generate-matrices.outputs.full_rebuild }}
+      signing_configured: ${{ steps.signing-config.outputs.configured }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - id: signing-config
+        name: Detect repository signing configuration
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "$SIGNING_KEY" ] && [ -n "$ALIAS" ] && [ -n "$KEY_STORE_PASSWORD" ] && [ -n "$KEY_PASSWORD" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          elif [ -z "$SIGNING_KEY" ] && [ -z "$ALIAS" ] && [ -z "$KEY_STORE_PASSWORD" ] && [ -z "$KEY_PASSWORD" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "No repository keystore configured; this run is build-verification only."
+          else
+            echo "Signing secrets are partially configured. Set all four or clear all four."
+            exit 1
+          fi
 
       - id: base
         name: Find last successful build
@@ -143,6 +163,7 @@ jobs:
       - name: Validate extension build outputs and APK signatures
         env:
           EXPECTED_SIGNING_KEY: 8f261f5b325fe2f871163809bab45d9be73593285a822949846c49e01c04b810
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
         shell: bash
         run: |
           set -euo pipefail
@@ -153,19 +174,25 @@ jobs:
           APK_COUNT=0
           while IFS= read -r -d '' APK; do
             APK_COUNT=$((APK_COUNT + 1))
-            ACTUAL_SIGNING_KEY="$("$APKSIGNER" verify --print-certs "$APK" | awk -F': ' '/certificate SHA-256 digest/ {print tolower($NF); exit}' | tr -d ':[:space:]')"
-            if [ "$ACTUAL_SIGNING_KEY" != "$EXPECTED_SIGNING_KEY" ]; then
-              echo "APK signature mismatch: $APK"
-              echo "Expected: $EXPECTED_SIGNING_KEY"
-              echo "Actual:   $ACTUAL_SIGNING_KEY"
-              exit 1
+            if [ -n "$SIGNING_KEY" ]; then
+              ACTUAL_SIGNING_KEY="$("$APKSIGNER" verify --print-certs "$APK" | awk -F': ' '/certificate SHA-256 digest/ {print tolower($NF); exit}' | tr -d ':[:space:]')"
+              if [ "$ACTUAL_SIGNING_KEY" != "$EXPECTED_SIGNING_KEY" ]; then
+                echo "APK signature mismatch: $APK"
+                echo "Expected: $EXPECTED_SIGNING_KEY"
+                echo "Actual:   $ACTUAL_SIGNING_KEY"
+                exit 1
+              fi
             fi
           done < <(find . -type f -path '*/build/outputs/apk/release/*.apk' -print0)
           if [ "$APK_COUNT" -eq 0 ]; then
             echo "No release APKs were produced."
             exit 1
           fi
-          echo "Validated $APK_COUNT APK(s) against the existing Mihon repository certificate."
+          if [ -n "$SIGNING_KEY" ]; then
+            echo "Validated $APK_COUNT APK(s) against the repository certificate."
+          else
+            echo "Validated $APK_COUNT build APK(s). Signature verification and repository publishing are disabled until the keystore is configured."
+          fi
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -185,6 +212,7 @@ jobs:
     if: >-
       always() &&
       needs.prepare.result == 'success' &&
+      needs.prepare.outputs.signing_configured == 'true' &&
       needs.build-extensions.result != 'failure' &&
       needs.build-extensions.result != 'cancelled' &&
       (needs.prepare.outputs.delete != '[]' || needs.build-extensions.result == 'success')
