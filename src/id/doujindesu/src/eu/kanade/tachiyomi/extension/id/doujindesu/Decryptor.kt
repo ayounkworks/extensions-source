@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.extension.id.doujindesu
 
 import keiyoushi.utils.parseAs
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.ResponseBody.Companion.toResponseBody
 import java.io.IOException
@@ -12,7 +13,13 @@ class Decryptor(private val apiUrlProvider: () -> String) {
 
     fun xorInterceptor() = Interceptor { chain ->
         val request = chain.request()
-        if (!request.url.toString().contains(apiUrlProvider())) return@Interceptor chain.proceed(request)
+        val apiUrl = apiUrlProvider().toHttpUrl()
+        val apiPath = apiUrl.encodedPath.trimEnd('/')
+        val isApiRequest = request.url.host == apiUrl.host &&
+            request.url.port == apiUrl.port &&
+            (request.url.encodedPath == apiPath || request.url.encodedPath.startsWith("$apiPath/"))
+
+        if (!isApiRequest) return@Interceptor chain.proceed(request)
 
         val response = chain.proceed(request)
 
@@ -38,7 +45,7 @@ class Decryptor(private val apiUrlProvider: () -> String) {
             a = (a shl 5) - a + ch.code
             a = toSigned32(a.toLong())
         }
-        var l = if (a != 0) abs(a).toLong() else 123456789L
+        var l = if (a != 0) abs(a.toLong()) else 123456789L
         return buildString {
             repeat(32) {
                 l = (l * 1664525L + 1013904223L) % 4294967296L
@@ -54,7 +61,7 @@ class Decryptor(private val apiUrlProvider: () -> String) {
     }
 
     fun yre(encryptedHex: String, key: String): String {
-        val bytes = encryptedHex.chunked(2).mapNotNull { it.toIntOrNull(16) }
+        val bytes = encryptedHex.chunked(2).map { it.toInt(16) }
         var d = 42
         val keyLen = key.length
         return buildString {
@@ -68,14 +75,28 @@ class Decryptor(private val apiUrlProvider: () -> String) {
     }
 
     fun decrypt(encryptedHex: String): String? {
+        if (
+            encryptedHex.isEmpty() ||
+            encryptedHex.length % 2 != 0 ||
+            encryptedHex.any { it.digitToIntOrNull(16) == null }
+        ) {
+            return null
+        }
+
         for (key in lU()) {
-            try {
-                val decoded = yre(encryptedHex, key)
-                return URLDecoder.decode(decoded, StandardCharsets.UTF_8.name())
-            } catch (_: Exception) {
-            }
+            val decoded = runCatching {
+                URLDecoder.decode(yre(encryptedHex, key), StandardCharsets.UTF_8.name())
+            }.getOrNull() ?: continue
+
+            if (decoded.isJsonPayload()) return decoded
         }
         return null
+    }
+
+    private fun String.isJsonPayload(): Boolean {
+        val payload = trim()
+        return (payload.startsWith("{") && payload.endsWith("}")) ||
+            (payload.startsWith("[") && payload.endsWith("]"))
     }
 
     companion object {

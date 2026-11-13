@@ -172,13 +172,27 @@ abstract class Doujindesu : KeiSource() {
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
+        if (!fetchDetails && !fetchChapters) {
+            return SMangaUpdate(manga, chapters)
+        }
+
         val item = client.get("$apiUrl/manga/${manga.getSlug()}".toHttpUrl(), Fetch.XHR).parseAs<MangaItem>()
-        return SMangaUpdate(
-            item.toSManga(baseUrl),
+
+        val updatedManga = if (fetchDetails) {
+            item.toSManga(baseUrl)
+        } else {
+            manga
+        }
+
+        val updatedChapters = if (fetchChapters) {
             item.chapters.mapIndexed { index, chapter ->
                 chapter.toSChapter(isLast = item.isCompleted() && index == 0)
-            },
-        )
+            }
+        } else {
+            chapters
+        }
+
+        return SMangaUpdate(updatedManga, updatedChapters)
     }
 
     override fun getChapterUrl(chapter: SChapter): String = "$baseUrl/reader/${chapter.url}"

@@ -6,9 +6,10 @@ plugins {
 
 keiyoushi {
     name = "Doujindesu"
-    versionCode = 4
+    versionCode = 5
     contentWarning = ContentWarning.NSFW
     libVersion = "1.6"
+    pkgName = "id.ayounkworks.doujindesupersonal"
 
     source {
         lang = "id"
