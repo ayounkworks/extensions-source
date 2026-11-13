@@ -1,8 +1,8 @@
 package eu.kanade.tachiyomi.extension.id.doujindesu
 
 import keiyoushi.utils.parseAs
-import okhttp3.Interceptor
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Interceptor
 import okhttp3.ResponseBody.Companion.toResponseBody
 import java.io.IOException
 import java.net.URLDecoder
