@@ -21,7 +21,7 @@ The `repo` branch contains:
 
 ## Maintainer configuration
 
-Configure these GitHub Actions secrets before running signed builds:
+Configure these GitHub Actions secrets in **Settings → Secrets and variables → Actions** before running signed builds:
 - `SIGNING_KEY` — base64-encoded JKS signing keystore
 - `ALIAS` — signing key alias
 - `KEY_STORE_PASSWORD` — keystore password
