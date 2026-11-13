@@ -99,7 +99,6 @@ jobs:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ALIAS }}
           EXPECTED_SIGNING_KEY: 8f261f5b325fe2f871163809bab45d9be73593285a822949846c49e01c04b810
         run: |
