@@ -6,7 +6,6 @@ on:
     paths:
       - '**'
       - '!**.md'
-      - '!.github/**'
       - '.github/scripts/**'
       - '.github/workflows/build_push.yml'
   workflow_dispatch:
