@@ -1,53 +1,34 @@
-# Keiyoushi Extensions
+# AyounkWorks Extensions
 
-### Please give the repo a :star:
+Custom Mihon extension repository based on the Keiyoushi extension source code.
 
-| Build                                                                                                                                                                               | Need Help?                                                                                                                                              |
-|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| [![CI](https://github.com/keiyoushi/extensions-source/actions/workflows/build_push.yml/badge.svg)](https://github.com/keiyoushi/extensions-source/actions/workflows/build_push.yml) | [![Discord](https://img.shields.io/discord/1193460528052453448.svg?label=discord&labelColor=7289da&color=2c2f33&style=flat)](https://discord.gg/3FbCpdKbdY) |
+## Add to Mihon
 
-## Usage
-**If you are new to repository/extensions, please read the [Keiyoushi Getting Started guide](https://keiyoushi.github.io/docs/guides/getting-started#adding-the-extension-repo) first.**
+Copy and paste this repository URL into **Mihon → Settings → Browse → Extension repos**:
 
-* You can add our repo by visiting the [Keiyoushi Website](https://keiyoushi.github.io/add-repo)
-* Otherwise, copy & paste the following URL: https://github.com/keiyoushi/extensions/raw/repo/index.pb
+`https://raw.githubusercontent.com/ayounkworks/extensions-source/repo/index.pb`
 
-## Requests
+## Build and publishing
 
-To request a new source or bug fix, [create an issue](https://github.com/keiyoushi/extensions-source/issues/new/choose).
+The `main` branch contains extension source code. GitHub Actions builds signed APK/JAR artifacts and publishes repository metadata to the `repo` branch.
 
-Please note that creating an issue does not mean that the source will be added or fixed in a timely
-fashion, because the work is volunteer-based. Some sources may also be impossible to do or prohibitively
-difficult to maintain.
+The `repo` branch contains:
+- `index.pb` — gzip-compressed protobuf repository index
+- `index.json` — readable index representation
+- `repo.json` — repository metadata
+- `*.apk` and `*.jar` — published extension artifacts
+- `icon.png` — repository icon
 
-If you would like to see a request fulfilled and have the necessary skills to do so, consider contributing!
-Issues are up-for-grabs for any developer if there is no assigned user already.
+## Maintainer configuration
 
-## Contributing
+Configure these GitHub Actions secrets before running signed builds:
+- `SIGNING_KEY` — base64-encoded JKS signing keystore
+- `ALIAS` — signing key alias
+- `KEY_STORE_PASSWORD` — keystore password
+- `KEY_PASSWORD` — key password
 
-Contributions are welcome!
+The fingerprint in `repo/index.json` and `repo/repo.json` must match the certificate used to sign APKs. Keep the existing signing key to preserve update compatibility for installed extensions.
 
-Check out the repo's [issue backlog](https://github.com/keiyoushi/extensions-source/issues) for source requests and bug reports.
+## Upstream
 
-## License
-
-    Copyright 2015 Javier Tomás
-
-    Licensed under the Apache License, Version 2.0 (the "License");
-    you may not use this file except in compliance with the License.
-    You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-    Unless required by applicable law or agreed to in writing, software
-    distributed under the License is distributed on an "AS IS" BASIS,
-    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-    See the License for the specific language governing permissions and
-    limitations under the License.
-
-## Disclaimer
-
-This project does not have any affiliation with the content providers available.
-
-This project is not affiliated with Mihon/Tachiyomi. Don't ask for help about these extensions at the
-official support means of Mihon/Tachiyomi. All credits to the codebase goes to the original contributors.
+This repository is an independent community fork based on [Keiyoushi Extensions](https://github.com/keiyoushi/extensions-source). It is not affiliated with Mihon or Keiyoushi.
