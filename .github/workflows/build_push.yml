@@ -30,7 +30,7 @@ permissions:
 
 concurrency:
   group: extension-repository-publish
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   CI_CHUNK_SIZE: 80
