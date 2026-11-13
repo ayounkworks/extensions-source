@@ -26,6 +26,16 @@ REPOSITORY_NAME = __import__("os").environ.get("MIHON_REPOSITORY_NAME", "AyounkW
 REPOSITORY_BADGE = __import__("os").environ.get("MIHON_REPOSITORY_BADGE", "AYW")
 REPOSITORY_SIGNING_KEY = __import__("os").environ.get("MIHON_REPOSITORY_SIGNING_KEY", "8f261f5b325fe2f871163809bab45d9be73593285a822949846c49e01c04b810")
 REPOSITORY_WEBSITE = f"https://github.com/{SOURCE_REPO}"
+REPOSITORY_SHORT_NAME = __import__("os").environ.get("MIHON_REPOSITORY_SHORT_NAME", "AyounkWorks")
+# This extension is built from its own maintained branch and must survive the all-source rebuild.
+PRESERVED_EXTERNAL_PACKAGES = {
+    value.strip()
+    for value in __import__("os").environ.get(
+        "MIHON_PRESERVE_PACKAGES",
+        "eu.kanade.tachiyomi.extension.id.ayounkworks.voratoonpersonal",
+    ).split(",")
+    if value.strip()
+}
 ASSET_LIMIT = 495  # Actual limit is 1000 but we upload 2 items per extension.
 UPLOAD_CHUNK_SIZE = 80
 UPLOAD_CHUNK_INTERVAL = 30
@@ -183,16 +193,39 @@ for ext, apk, jar, apk_changed, jar_changed in new_extensions:
         ext.resources.apkUrl = old_resources.apkUrl
         ext.resources.jarUrl = old_resources.jarUrl
 
-# Merge with the already-published index, dropping the deleted/rebuilt modules.
-final_extensions = []
-final_extensions.extend(
-    ext
-    for ext in remote_proto.extensionList.extensions
-    if not full_rebuild
-    and not any(ext.packageName.endswith(f".{module}") for module in to_delete)
-)
-final_extensions.extend(ext for ext, _, _, _, _ in new_extensions)
+# Merge with the already-published index.
+# A full rebuild replaces the source-managed set, but explicitly preserved extensions
+# (for example, VoraToon Personal from its dedicated branch) remain in the repository.
+new_package_names = {ext.packageName for ext, _, _, _, _ in new_extensions}
+deleted_suffixes = tuple(f".{module}" for module in to_delete)
+
+if full_rebuild:
+    preserved_extensions = [
+        ext
+        for ext in remote_proto.extensionList.extensions
+        if ext.packageName in PRESERVED_EXTERNAL_PACKAGES
+        and ext.packageName not in new_package_names
+    ]
+else:
+    preserved_extensions = [
+        ext
+        for ext in remote_proto.extensionList.extensions
+        if ext.packageName not in new_package_names
+        and not ext.packageName.endswith(deleted_suffixes)
+    ]
+
+final_extensions = preserved_extensions + [
+    ext for ext, _, _, _, _ in new_extensions
+]
 final_extensions.sort(key=lambda ext: ext.packageName)
+
+# Package IDs must be unique in a Mihon repository index.
+package_names = [ext.packageName for ext in final_extensions]
+if len(package_names) != len(set(package_names)):
+    duplicates = sorted(
+        package for package in set(package_names) if package_names.count(package) > 1
+    )
+    raise ValueError(f"Duplicate extension package names in index: {duplicates}")
 
 index = index_pb2.Index(
     name=REPOSITORY_NAME,
@@ -213,6 +246,28 @@ with REPO_DIR.joinpath("index.json").open("w", encoding="utf-8") as f:
 
 with REPO_DIR.joinpath("index.pb").open("wb") as f:
     f.write(gzip.compress(index.SerializeToString(deterministic=True), mtime=0))
+
+# Mihon reads repo.json for repository discovery/display metadata.
+repo_metadata = {
+    "index_v2": f"https://raw.githubusercontent.com/{SOURCE_REPO}/repo/index.pb",
+    "meta": {
+        "name": REPOSITORY_NAME,
+        "shortName": REPOSITORY_SHORT_NAME,
+        "website": REPOSITORY_WEBSITE,
+        "signingKeyFingerprint": REPOSITORY_SIGNING_KEY,
+    },
+}
+with REPO_DIR.joinpath("repo.json").open("w", encoding="utf-8") as f:
+    json.dump(repo_metadata, f, indent=2)
+    f.write("\\n")
+
+# Keep the published branch's landing page aligned with its actual repository URL.
+with REPO_DIR.joinpath("README.md").open("w", encoding="utf-8") as f:
+    f.write(
+        f"# {REPOSITORY_NAME}\\n\\n"
+        "Add this repository URL in Mihon → Settings → Browse → Extension repos:\\n\\n"
+        f"https://raw.githubusercontent.com/{SOURCE_REPO}/repo/index.pb\\n"
+    )
 
 with release_assets_path.open("w", encoding="utf-8") as f:
     json.dump(updated_release_assets, f, indent=2, sort_keys=True)
