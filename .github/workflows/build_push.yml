@@ -98,11 +98,12 @@ jobs:
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ALIAS }}
         run: |
           set -euo pipefail
-          if [ -z "$SIGNING_KEY" ] || [ -z "$KEY_STORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ]; then
-            echo "SIGNING_KEY, ALIAS, and KEY_STORE_PASSWORD secrets are required."
+          if [ -z "$SIGNING_KEY" ] || [ -z "$KEY_STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ] || [ -z "$KEY_ALIAS" ]; then
+            echo "SIGNING_KEY, ALIAS, KEY_STORE_PASSWORD, and KEY_PASSWORD secrets are required."
             exit 1
           fi
           printf '%s' "$SIGNING_KEY" | base64 -d > signingkey.jks
