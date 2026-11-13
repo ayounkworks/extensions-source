@@ -103,18 +103,28 @@ jobs:
           EXPECTED_SIGNING_KEY: 8f261f5b325fe2f871163809bab45d9be73593285a822949846c49e01c04b810
         run: |
           set -euo pipefail
-          if [ -z "$SIGNING_KEY" ] || [ -z "$KEY_STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ] || [ -z "$KEY_ALIAS" ]; then
-            echo "SIGNING_KEY, ALIAS, KEY_STORE_PASSWORD, and KEY_PASSWORD secrets are required."
-            exit 1
-          fi
-          printf '%s' "$SIGNING_KEY" | base64 -d > signingkey.jks
-          keytool -list -keystore signingkey.jks -storepass "$KEY_STORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
-          ACTUAL_SIGNING_KEY="$(keytool -exportcert -keystore signingkey.jks -storepass "$KEY_STORE_PASSWORD" -alias "$KEY_ALIAS" | sha256sum | awk '{print $1}')"
-          if [ "$ACTUAL_SIGNING_KEY" != "$EXPECTED_SIGNING_KEY" ]; then
-            echo "Signing certificate does not match the existing Mihon repository fingerprint."
-            echo "Expected: $EXPECTED_SIGNING_KEY"
-            echo "Actual:   $ACTUAL_SIGNING_KEY"
-            exit 1
+          if [ -n "$SIGNING_KEY" ]; then
+            if [ -z "$KEY_STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ] || [ -z "$KEY_ALIAS" ]; then
+              echo "When SIGNING_KEY is set, ALIAS, KEY_STORE_PASSWORD, and KEY_PASSWORD must also be set."
+              exit 1
+            fi
+            printf '%s' "$SIGNING_KEY" | base64 -d > signingkey.jks
+            keytool -list -keystore signingkey.jks -storepass "$KEY_STORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+            ACTUAL_SIGNING_KEY="$(keytool -exportcert -keystore signingkey.jks -storepass "$KEY_STORE_PASSWORD" -alias "$KEY_ALIAS" | sha256sum | awk '{print $1}')"
+            if [ "$ACTUAL_SIGNING_KEY" != "$EXPECTED_SIGNING_KEY" ]; then
+              echo "Signing certificate does not match the existing Mihon repository fingerprint."
+              echo "Expected: $EXPECTED_SIGNING_KEY"
+              echo "Actual:   $ACTUAL_SIGNING_KEY"
+              exit 1
+            fi
+            echo "Using repository keystore signing."
+          else
+            if [ -n "$KEY_STORE_PASSWORD" ] || [ -n "$KEY_PASSWORD" ] || [ -n "$KEY_ALIAS" ]; then
+              echo "Signing secrets are only partially configured."
+              exit 1
+            fi
+            echo "No signing keystore configured. Testing Android debug signing against the existing repository fingerprint."
+            rm -f signingkey.jks
           fi
       - name: Build extensions
         env:
@@ -130,13 +140,32 @@ jobs:
             TASKS+=("${module}:assembleRelease")
           done
           ./gradlew "${TASKS[@]}"
-      - name: Validate extension build outputs
+      - name: Validate extension build outputs and APK signatures
+        env:
+          EXPECTED_SIGNING_KEY: 8f261f5b325fe2f871163809bab45d9be73593285a822949846c49e01c04b810
         shell: bash
         run: |
           set -euo pipefail
           find . -path '*/build/keiyoushi-source-info.json' -print -quit | grep -q .
-          find . -path '*/build/outputs/apk/release/*.apk' -print -quit | grep -q .
           find . -path '*/build/outputs/jar/release/*.jar' -print -quit | grep -q .
+          APKSIGNER="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$APKSIGNER"
+          APK_COUNT=0
+          while IFS= read -r -d '' APK; do
+            APK_COUNT=$((APK_COUNT + 1))
+            ACTUAL_SIGNING_KEY="$("$APKSIGNER" verify --print-certs "$APK" | awk -F': ' '/certificate SHA-256 digest/ {print tolower($NF); exit}' | tr -d ':[:space:]')"
+            if [ "$ACTUAL_SIGNING_KEY" != "$EXPECTED_SIGNING_KEY" ]; then
+              echo "APK signature mismatch: $APK"
+              echo "Expected: $EXPECTED_SIGNING_KEY"
+              echo "Actual:   $ACTUAL_SIGNING_KEY"
+              exit 1
+            fi
+          done < <(find . -type f -path '*/build/outputs/apk/release/*.apk' -print0)
+          if [ "$APK_COUNT" -eq 0 ]; then
+            echo "No release APKs were produced."
+            exit 1
+          fi
+          echo "Validated $APK_COUNT APK(s) against the existing Mihon repository certificate."
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
