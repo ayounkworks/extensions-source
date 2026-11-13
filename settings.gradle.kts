@@ -28,7 +28,7 @@ dependencyResolutionManagement {
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
-rootProject.name = "AyounkWorks Extensions"
+rootProject.name = "AyounkWorksExtensions"
 
 /**
  * Add or remove modules to load as needed for local development here.
