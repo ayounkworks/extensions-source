@@ -130,12 +130,12 @@ jobs:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
         run: |
-          if [ -n "$SIGNING_KEY" ]; then
-            printf '%s' "$SIGNING_KEY" | base64 -d > signingkey.jks
-          else
-            echo "SIGNING_KEY secret is not configured; refusing release build."
+          set -euo pipefail
+          if [ -z "$SIGNING_KEY" ] || [ -z "$KEY_STORE_PASSWORD" ]; then
+            echo "SIGNING_KEY and KEY_STORE_PASSWORD secrets are required."
             exit 1
           fi
+          printf '%s' "$SIGNING_KEY" | base64 -d > signingkey.jks
           keytool -list -keystore signingkey.jks -storepass "$KEY_STORE_PASSWORD" >/dev/null
       - name: Build extensions
         env:
@@ -145,6 +145,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         shell: bash
         run: |
+          set -euo pipefail
           TASKS=()
           for module in $MODULES; do
             TASKS+=("${module}:assembleRelease")
@@ -163,7 +164,6 @@ jobs:
       - name: Remove signing material
         if: always()
         run: rm -f signingkey.jks
-
   publish:
     name: Publish Mihon repository
     needs: [prepare, build-extensions]
