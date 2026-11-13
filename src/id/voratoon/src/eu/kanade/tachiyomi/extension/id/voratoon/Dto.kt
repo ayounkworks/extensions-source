@@ -10,18 +10,36 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import kotlin.time.Instant
 
 @Serializable
-class SeriesListResponse(
-    val data: List<SeriesItem>,
-    val meta: Meta? = null,
+class BrowseDto(
+    val series: List<SeriesItem> = emptyList(),
+    val seriesMeta: Meta? = null,
+)
+
+@Serializable
+class FilterPayloadDto(
+    val genres: List<GenreItem> = emptyList(),
+)
+
+@Serializable
+class SeriesDetailsDto(
+    val series: List<SeriesItem> = emptyList(),
+    val chapters: List<ChapterItem> = emptyList(),
+)
+
+@Serializable
+class ChapterPageDto(
+    val chapter: ChapterItem,
 )
 
 @Serializable
 class SeriesItem(
-    private val id: Int,
+    private val id: Int? = null,
     private val data: SeriesData,
 ) {
     fun toSManga(): SManga = SManga.create().apply {
-        url = "/series/${data.slug ?: id}"
+        val seriesSlug = data.slug ?: id?.toString()
+            ?: error("Series payload is missing both slug and ID")
+        url = "/series/$seriesSlug"
         title = data.title
         thumbnail_url = data.coverImage
         author = data.author
@@ -40,7 +58,7 @@ class SeriesItem(
 
 @Serializable
 class SeriesData(
-    val slug: String?,
+    val slug: String? = null,
     val title: String,
     val author: String? = null,
     val status: String? = null,
@@ -60,27 +78,16 @@ class GenreInfo(
 )
 
 @Serializable
-class GenreResponse(
-    val data: List<GenreItem>,
-)
-
-@Serializable
 class GenreItem(
-    val id: Int,
     private val data: GenreInfo,
 ) {
-    fun toPair(): Pair<String, String> = data.name to id.toString()
+    fun toPair(): Pair<String, String> = data.name to data.name.lowercase()
 }
 
 @Serializable
 class Meta(
     val page: Int? = null,
     val lastPage: Int? = null,
-)
-
-@Serializable
-class SeriesDetailResponse(
-    val data: SeriesItem,
 )
 
 @Serializable
@@ -103,8 +110,10 @@ class ChapterItem(
         chapter_number = index
     }
 
-    fun toPageList(): List<Page> = data.images
-        ?.mapIndexed { index, imageUrl -> Page(index, imageUrl = imageUrl) }
+    fun toPageList(chapterUrl: String = ""): List<Page> = data.images
+        ?.distinctBy(::pageImageKey)
+        ?.dropLastWhile(::isCoverPageImage)
+        ?.mapIndexed { index, imageUrl -> Page(index, url = chapterUrl, imageUrl = imageUrl) }
         ?: emptyList()
 }
 
@@ -115,14 +124,36 @@ class ChapterData(
     val images: List<String>? = null,
 )
 
-@Serializable
-class ChapterListResponse(
-    val data: List<ChapterItem>,
-)
+private fun pageImageKey(url: String): String {
+    val parsed = url.toHttpUrlOrNull()
+        ?: return url.substringBefore('#').trimEnd('/').lowercase()
 
-@Serializable
-class ChapterDetailResponse(
-    val data: ChapterItem,
+    val proxySource = parsed.queryParameter("url")
+    if (!proxySource.isNullOrBlank()) {
+        val resolvedSource = parsed.resolve(proxySource)
+        if (resolvedSource != null && resolvedSource.toString() != url) {
+            return pageImageKey(resolvedSource.toString())
+        }
+    }
+
+    val transformParameters = setOf("w", "h", "width", "height", "q", "quality", "format", "auto", "fit", "crop", "dpr")
+    val builder = parsed.newBuilder().fragment(null)
+    parsed.queryParameterNames
+        .filter { it.lowercase() in transformParameters }
+        .forEach { builder.removeAllQueryParameters(it) }
+
+    return builder.build().toString().trimEnd('/').lowercase()
+}
+
+private fun isCoverPageImage(url: String): Boolean {
+    val path = url.toHttpUrlOrNull()?.encodedPath
+        ?: url.substringBefore('?').substringBefore('#')
+    return COVER_URL_REGEX.containsMatchIn(path)
+}
+
+private val COVER_URL_REGEX = Regex(
+    """(?:^|[/_.-])(?:cover|covers|poster|posters|thumbnail|thumbnails|series[-_]?image|manga[-_]?image|book[-_]?cover)(?:$|[/_.#?%-])""",
+    RegexOption.IGNORE_CASE,
 )
 
 private fun parseChapterDate(dateString: String): Long = Instant.tryParse(dateString)
