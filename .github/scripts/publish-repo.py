@@ -259,14 +259,14 @@ repo_metadata = {
 }
 with REPO_DIR.joinpath("repo.json").open("w", encoding="utf-8") as f:
     json.dump(repo_metadata, f, indent=2)
-    f.write("\\n")
+    f.write("\n")
 
 # Keep the published branch's landing page aligned with its actual repository URL.
 with REPO_DIR.joinpath("README.md").open("w", encoding="utf-8") as f:
     f.write(
-        f"# {REPOSITORY_NAME}\\n\\n"
-        "Add this repository URL in Mihon → Settings → Browse → Extension repos:\\n\\n"
-        f"https://raw.githubusercontent.com/{SOURCE_REPO}/repo/index.pb\\n"
+        f"# {REPOSITORY_NAME}\n\n"
+        "Add this repository URL in Mihon → Settings → Browse → Extension repos:\n\n"
+        f"https://raw.githubusercontent.com/{SOURCE_REPO}/repo/index.pb\n"
     )
 
 with release_assets_path.open("w", encoding="utf-8") as f:
