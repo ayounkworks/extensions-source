@@ -60,7 +60,7 @@ abstract class VoraToon : KeiSource() {
     }
 
     private suspend fun parseSeriesList(url: HttpUrl): MangasPage {
-        val dto = client.get(url, rscHeaders, Fetch.XHR).extractNextJs<BrowseDto> {
+        val dto = client.get(url, rscHeaders).extractNextJs<BrowseDto> {
             it is JsonObject && "series" in it && "seriesMeta" in it
         } ?: return MangasPage(emptyList(), false)
 
@@ -80,7 +80,7 @@ abstract class VoraToon : KeiSource() {
         }
 
         val slug = manga.getSlug(baseUrl)
-        val dto = client.get("$baseUrl/series/$slug", rscHeaders, Fetch.XHR).extractNextJs<SeriesDetailsDto> {
+        val dto = client.get("$baseUrl/series/$slug", rscHeaders).extractNextJs<SeriesDetailsDto> {
             it is JsonObject && "series" in it && "chapters" in it
         } ?: return SMangaUpdate(manga, chapters)
 
@@ -120,7 +120,6 @@ abstract class VoraToon : KeiSource() {
         val dto = client.get(
             chapterUrl,
             rscHeaders,
-            Fetch.XHR,
         ).extractNextJs<ChapterPageDto> {
             it is JsonObject && "chapter" in it
         } ?: error("Failed to extract chapter pages")
@@ -141,7 +140,7 @@ abstract class VoraToon : KeiSource() {
     override val supportsFilterFetching: Boolean get() = true
 
     override suspend fun fetchFilterData(): JsonElement {
-        val dto = client.get("$baseUrl/browse", rscHeaders, Fetch.XHR).extractNextJs<FilterPayloadDto> {
+        val dto = client.get("$baseUrl/browse", rscHeaders).extractNextJs<FilterPayloadDto> {
             it is JsonObject && "genres" in it
         } ?: error("Failed to fetch filter data")
         return dto.genres.toJsonElement()
