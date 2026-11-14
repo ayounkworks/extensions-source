@@ -28,8 +28,16 @@ abstract class VoraToon : KeiSource() {
         rateLimit(3)
     }
 
-    private val rscHeaders: Headers
-        get() = headers.newBuilder().set("RSC", "1").build()
+    private fun rscHeaders(referer: String? = null): Headers = headers.newBuilder()
+        .set("RSC", "1")
+        .set("Accept", "*/*")
+        .set("Sec-Fetch-Dest", "empty")
+        .set("Sec-Fetch-Mode", "cors")
+        .set("Sec-Fetch-Site", "same-origin")
+        .apply {
+            if (referer != null) set("Referer", referer)
+        }
+        .build()
 
     override suspend fun getPopularManga(page: Int): MangasPage = parseSeriesList(
         "$baseUrl/browse".toHttpUrl().newBuilder()
@@ -60,7 +68,7 @@ abstract class VoraToon : KeiSource() {
     }
 
     private suspend fun parseSeriesList(url: HttpUrl): MangasPage {
-        val dto = client.get(url, rscHeaders).extractNextJs<BrowseDto> {
+        val dto = client.get(url, rscHeaders()).extractNextJs<BrowseDto> {
             it is JsonObject && "series" in it && "seriesMeta" in it
         } ?: return MangasPage(emptyList(), false)
 
@@ -80,7 +88,7 @@ abstract class VoraToon : KeiSource() {
         }
 
         val slug = manga.getSlug(baseUrl)
-        val dto = client.get("$baseUrl/series/$slug", rscHeaders).extractNextJs<SeriesDetailsDto> {
+        val dto = client.get("$baseUrl/series/$slug", rscHeaders()).extractNextJs<SeriesDetailsDto> {
             it is JsonObject && "series" in it && "chapters" in it
         } ?: return SMangaUpdate(manga, chapters)
 
@@ -117,12 +125,34 @@ abstract class VoraToon : KeiSource() {
     override suspend fun getPageList(chapter: SChapter): List<Page> {
         val (slug, chapterIndex) = chapter.getSlugAndIndex(baseUrl)
         val chapterUrl = "$baseUrl/series/$slug/chapter/$chapterIndex"
-        val dto = client.get(
-            chapterUrl,
-            rscHeaders,
-        ).extractNextJs<ChapterPageDto> {
+        val seriesUrl = "$baseUrl/series/$slug"
+        val chapterDtoPredicate: (JsonElement) -> Boolean = {
             it is JsonObject && "chapter" in it
-        } ?: error("Failed to extract chapter pages")
+        }
+
+        // Try the Next.js RSC response first, matching the site's XHR request pattern.
+        val rscDto = try {
+            client.get(chapterUrl, rscHeaders(seriesUrl)).extractNextJs<ChapterPageDto>(chapterDtoPredicate)
+        } catch (_: Exception) {
+            null
+        }
+
+        // Some site/CDN responses serve a normal HTML document or reject the RSC request.
+        // The HTML extractor is supported by extractNextJs too, so fall back to a browser-like page request.
+        val documentHeaders = headers.newBuilder()
+            .set("Referer", seriesUrl)
+            .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .set("Sec-Fetch-Dest", "document")
+            .set("Sec-Fetch-Mode", "navigate")
+            .set("Sec-Fetch-Site", "same-origin")
+            .set("Upgrade-Insecure-Requests", "1")
+            .build()
+
+        val dto = rscDto ?: try {
+            client.get(chapterUrl, documentHeaders).extractNextJs<ChapterPageDto>(chapterDtoPredicate)
+        } catch (_: Exception) {
+            null
+        } ?: error("Failed to extract chapter pages from both RSC and HTML responses")
 
         return dto.chapter.toPageList(chapterUrl)
     }
@@ -140,7 +170,7 @@ abstract class VoraToon : KeiSource() {
     override val supportsFilterFetching: Boolean get() = true
 
     override suspend fun fetchFilterData(): JsonElement {
-        val dto = client.get("$baseUrl/browse", rscHeaders).extractNextJs<FilterPayloadDto> {
+        val dto = client.get("$baseUrl/browse", rscHeaders()).extractNextJs<FilterPayloadDto> {
             it is JsonObject && "genres" in it
         } ?: error("Failed to fetch filter data")
         return dto.genres.toJsonElement()
