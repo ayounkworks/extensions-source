@@ -120,7 +120,7 @@ jobs:
           KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ALIAS }}
-          EXPECTED_SIGNING_KEY: 23bafc3c7f1ffc592ce2259252d268a422d6b7390a4e9f46d322c36596cb2b98
+          EXPECTED_SIGNING_KEY: 7d3915d9b79773a0767d295daed4ee36d62cf425626e8ebeca9fb04f459aef32
         run: |
           set -euo pipefail
           if [ -n "$SIGNING_KEY" ]; then
@@ -162,7 +162,7 @@ jobs:
           ./gradlew "${TASKS[@]}"
       - name: Validate extension build outputs and APK signatures
         env:
-          EXPECTED_SIGNING_KEY: 23bafc3c7f1ffc592ce2259252d268a422d6b7390a4e9f46d322c36596cb2b98
+          EXPECTED_SIGNING_KEY: 7d3915d9b79773a0767d295daed4ee36d62cf425626e8ebeca9fb04f459aef32
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
         shell: bash
         run: |
@@ -247,7 +247,7 @@ jobs:
           FULL_REBUILD: ${{ needs.prepare.outputs.full_rebuild }}
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          MIHON_REPOSITORY_SIGNING_KEY: 23bafc3c7f1ffc592ce2259252d268a422d6b7390a4e9f46d322c36596cb2b98
+          MIHON_REPOSITORY_SIGNING_KEY: 7d3915d9b79773a0767d295daed4ee36d62cf425626e8ebeca9fb04f459aef32
         run: |
           python -m pip install --disable-pip-version-check protobuf
           python -u ../main/.github/scripts/publish-repo.py "$DELETE" "$GITHUB_SHA" "$FULL_REBUILD"
