@@ -7,8 +7,6 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
-import keiyoushi.network.Fetch
-import keiyoushi.network.fetch
 import keiyoushi.network.get
 import keiyoushi.network.rateLimit
 import keiyoushi.source.KeiSource
@@ -130,8 +128,14 @@ abstract class VoraToon : KeiSource() {
         return dto.chapter.toPageList(chapterUrl)
     }
 
-    override fun getImageRequest(page: Page): Request = super.getImageRequest(page).newBuilder()
-        .fetch(Fetch.IMAGE.from(page.url))
+    override fun imageRequest(page: Page): Request = Request.Builder()
+        .url(page.imageUrl!!)
+        .headers(
+            headers.newBuilder()
+                .set("Referer", page.url)
+                .build(),
+        )
+        .get()
         .build()
 
     override val supportsFilterFetching: Boolean get() = true
