@@ -13,6 +13,10 @@ import keiyoushi.source.KeiSource
 import keiyoushi.utils.extractNextJs
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.toJsonElement
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Duration.Companion.milliseconds
+import keiyoushi.utils.runWebView
+import keiyoushi.utils.WebViewTimeoutException
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import okhttp3.Headers
@@ -20,6 +24,7 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.IOException
 
 @Source
 abstract class VoraToon : KeiSource() {
@@ -130,31 +135,73 @@ abstract class VoraToon : KeiSource() {
             it is JsonObject && "chapter" in it
         }
 
-        // Try the Next.js RSC response first, matching the site's XHR request pattern.
-        val rscDto = try {
-            client.get(chapterUrl, rscHeaders(seriesUrl)).extractNextJs<ChapterPageDto>(chapterDtoPredicate)
-        } catch (_: Exception) {
-            null
+        // First try the server-rendered Next.js payload.
+        val directPages = runCatching {
+            val rscDto = client.get(chapterUrl, rscHeaders(seriesUrl))
+                .extractNextJs<ChapterPageDto>(chapterDtoPredicate)
+
+            val dto = rscDto ?: runCatching {
+                val documentHeaders = headers.newBuilder()
+                    .set("Referer", seriesUrl)
+                    .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .set("Sec-Fetch-Dest", "document")
+                    .set("Sec-Fetch-Mode", "navigate")
+                    .set("Sec-Fetch-Site", "same-origin")
+                    .set("Upgrade-Insecure-Requests", "1")
+                    .build()
+
+                client.get(chapterUrl, documentHeaders).extractNextJs<ChapterPageDto>(chapterDtoPredicate)
+            }.getOrNull()
+
+            dto?.chapter?.toPageList(chapterUrl)
+        }.getOrNull()
+
+        if (!directPages.isNullOrEmpty()) {
+            return directPages
         }
 
-        // Some site/CDN responses serve a normal HTML document or reject the RSC request.
-        // The HTML extractor is supported by extractNextJs too, so fall back to a browser-like page request.
-        val documentHeaders = headers.newBuilder()
-            .set("Referer", seriesUrl)
-            .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            .set("Sec-Fetch-Dest", "document")
-            .set("Sec-Fetch-Mode", "navigate")
-            .set("Sec-Fetch-Site", "same-origin")
-            .set("Upgrade-Insecure-Requests", "1")
-            .build()
+        // The reader can populate its images only after the page's JavaScript finishes.
+        // Use the same WebView session/cookies and poll the rendered reader DOM.
+        val images = try {
+            runWebView<List<String>>(timeout = 25.seconds) {
+                userAgent = headers["User-Agent"] ?: ""
+                poll(500.milliseconds) {
+                    evaluateJs(
+                        """
+                        (() => {
+                            const imgs = Array.from(document.querySelectorAll('img[data-chapter-page], [data-reader-chapter-id] img'))
+                                .map(img => img.getAttribute('data-chapter-page') || img.src)
+                                .filter(src => src && (src.startsWith('http://') || src.startsWith('https://')));
+                            return imgs.length > 0 ? Array.from(new Set(imgs)) : null;
+                        })()
+                        """.trimIndent(),
+                    ) { output ->
+                        val list = runCatching {
+                            output.trim().takeIf { it != "null" && it != "undefined" }?.let { raw ->
+                                runCatching { raw.parseAs<List<String>>() }.getOrElse {
+                                    raw.parseAs<String>().parseAs<List<String>>()
+                                }
+                            }
+                        }.getOrNull()
 
-        val dto = rscDto ?: try {
-            client.get(chapterUrl, documentHeaders).extractNextJs<ChapterPageDto>(chapterDtoPredicate)
-        } catch (_: Exception) {
-            null
-        } ?: error("Failed to extract chapter pages from both RSC and HTML responses")
+                        if (!list.isNullOrEmpty()) {
+                            resolve(list)
+                        }
+                    }
+                }
+                loadUrl(chapterUrl)
+            }
+        } catch (_: WebViewTimeoutException) {
+            throw IOException("Gagal memuat gambar chapter. Verifikasi website mungkin belum selesai; coba buka WebView lalu ulangi.")
+        }
 
-        return dto.chapter.toPageList(chapterUrl)
+        if (images.isEmpty()) {
+            throw IOException("Chapter terbuka, tetapi daftar gambar tidak ditemukan di halaman reader.")
+        }
+
+        return images.mapIndexed { index, imageUrl ->
+            Page(index, url = chapterUrl, imageUrl = imageUrl)
+        }
     }
 
     override fun imageRequest(page: Page): Request = Request.Builder()
