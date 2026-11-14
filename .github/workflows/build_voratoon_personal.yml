@@ -46,6 +46,27 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
 
+      - name: Prepare and verify repository signing key
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          EXPECTED_SIGNING_KEY: 7d3915d9b79773a0767d295daed4ee36d62cf425626e8ebeca9fb04f459aef32
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_KEY" || { echo "SIGNING_KEY secret is empty"; exit 1; }
+          test -n "$ALIAS" || { echo "ALIAS secret is empty"; exit 1; }
+          test -n "$KEY_STORE_PASSWORD" || { echo "KEY_STORE_PASSWORD secret is empty"; exit 1; }
+          printf '%s' "$SIGNING_KEY" | base64 --decode > signingkey.jks
+          test -s signingkey.jks
+          ACTUAL_SIGNING_KEY="$(keytool -exportcert -keystore signingkey.jks -storepass "$KEY_STORE_PASSWORD" -alias "$ALIAS" | sha256sum | awk '{print tolower($1)}')"
+          echo "Signing certificate SHA-256: $ACTUAL_SIGNING_KEY"
+          if [ "$ACTUAL_SIGNING_KEY" != "$EXPECTED_SIGNING_KEY" ]; then
+            echo "Signing certificate does not match the repository fingerprint."
+            exit 1
+          fi
+
       - name: Build VoraToon extension
         env:
           ALIAS: ${{ secrets.ALIAS }}
@@ -76,6 +97,18 @@ jobs:
           test -n "$JAR"
           test -f "$INFO"
           test -f "$ICON"
+
+          APKSIGNER="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$APKSIGNER"
+          VERIFY_OUTPUT="$("$APKSIGNER" verify --verbose --print-certs "$APK" 2>&1)" || {
+            printf '%s\\n' "$VERIFY_OUTPUT"
+            echo "VoraToon Personal APK signature verification failed: $APK"
+            exit 1
+          }
+          printf '%s\\n' "$VERIFY_OUTPUT"
+          APK_FINGERPRINT="$(printf '%s\\n' "$VERIFY_OUTPUT" | awk -F': ' '/certificate SHA-256 digest/ {print tolower($NF); exit}' | tr -d ':[:space:]')"
+          EXPECTED_FINGERPRINT=7d3915d9b79773a0767d295daed4ee36d62cf425626e8ebeca9fb04f459aef32
+          test "$APK_FINGERPRINT" = "$EXPECTED_FINGERPRINT"
 
           FILENAME_APK="$(basename "$APK")"
           FILENAME_JAR="$(basename "$JAR")"
