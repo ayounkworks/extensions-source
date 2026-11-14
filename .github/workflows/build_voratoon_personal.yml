@@ -88,7 +88,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          pip install protobuf
+          python3 -m pip install --user --upgrade "protobuf==7.35.1"
+          python3 -c 'import google.protobuf; assert google.protobuf.__version__ == "7.35.1", google.protobuf.__version__'
           APK="$(find src/id/voratoon/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
           JAR="$(find src/id/voratoon/build/outputs/jar/release -maxdepth 1 -type f -name '*.jar' -print -quit)"
           INFO="src/id/voratoon/build/keiyoushi-source-info.json"
