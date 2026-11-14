@@ -34,7 +34,7 @@ PRESERVED_EXTERNAL_PACKAGES = {
     value.strip()
     for value in os.environ.get(
         "MIHON_PRESERVE_PACKAGES",
-        "eu.kanade.tachiyomi.extension.id.ayounkworks.voratoonpersonal",
+        "eu.kanade.tachiyomi.extension.id.ayounkworks.voratoonpersonal,eu.kanade.tachiyomi.extension.id.ayounkworks.doujindesupersonal",
     ).split(",")
     if value.strip()
 }
